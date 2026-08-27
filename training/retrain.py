@@ -132,8 +132,7 @@ def load_config(path: Path) -> RetrainConfig:
 def load_dataset(path: Path, fmt: str | None) -> pd.DataFrame:
     if not path.is_file():
         raise SystemExit(
-            f"dataset not found: {path}\n"
-            f"If it is DVC-tracked, run `dvc pull` first."
+            f"dataset not found: {path}\n" f"If it is DVC-tracked, run `dvc pull` first."
         )
     fmt = fmt or ("parquet" if path.suffix in {".parquet", ".pq"} else "csv")
     if fmt == "parquet":
@@ -193,7 +192,11 @@ def incumbent(registry_root: Path, model_id: str) -> Manifest | None:
     if not model_dir.is_dir():
         return None
     versions = sorted(
-        (p.name for p in model_dir.iterdir() if p.is_dir() and (p / "manifest.json").is_file()),
+        (
+            p.name
+            for p in model_dir.iterdir()
+            if p.is_dir() and (p / "manifest.json").is_file()
+        ),
         key=_version_key,
     )
     if not versions:
@@ -265,7 +268,7 @@ def probe_supports_uq(emulator, parameters: list[InputParameter]) -> bool:
                 _, variance = emulator.predict_mean_and_variance(
                     torch.tensor(midpoint, dtype=dtype)
                 )
-        except Exception as exc:  # noqa: BLE001 - re-raised below with context
+        except Exception as exc:
             last_error = exc
             continue
         return variance is not None
@@ -309,7 +312,7 @@ class Tracker:
             mlflow.set_tracking_uri(uri or default_tracking_uri())
             mlflow.set_experiment(experiment)
             self._mlflow = mlflow
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             logger.warning("MLflow tracking disabled: %s", exc)
             self.enabled = False
 
@@ -319,7 +322,7 @@ class Tracker:
                 run = self._mlflow.start_run()
                 self.run_id = run.info.run_id
                 self.run_uri = self._mlflow.get_tracking_uri()
-            except Exception as exc:  # noqa: BLE001
+            except Exception as exc:
                 logger.warning("MLflow run could not start: %s", exc)
                 self._mlflow = None
                 self.enabled = False
@@ -329,7 +332,7 @@ class Tracker:
         if self._mlflow is not None and self.run_id is not None:
             try:
                 self._mlflow.end_run()
-            except Exception as exc:  # noqa: BLE001
+            except Exception as exc:
                 logger.warning("MLflow run could not be closed: %s", exc)
 
     def _safe(self, name: str, *args, **kwargs) -> None:
@@ -337,7 +340,7 @@ class Tracker:
             return
         try:
             getattr(self._mlflow, name)(*args, **kwargs)
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             logger.warning("MLflow %s failed: %s", name, exc)
 
     def log_params(self, params: dict[str, Any]) -> None:
@@ -397,17 +400,23 @@ def render_report(summary: dict[str, Any]) -> str:
             f"| {delta} |"
         )
 
+    previous = old or {}
+
+    def was(key: str) -> str:
+        value = previous.get(key)
+        return "—" if value is None else str(value)
+
     lines += [
         "",
         "### Provenance",
         "",
         "| | Incumbent | Candidate |",
         "|---|---|---|",
-        f"| Version | {(old or {}).get('version', '—')} | {new['version']} |",
-        f"| Emulator | {(old or {}).get('emulator_class', '—')} | {new['emulator_class']} |",
-        f"| Trained | {(old or {}).get('training_date', '—')} | {new['training_date']} |",
-        f"| Rows | {(old or {}).get('n_train', '—')} | {new['n_train']} |",
-        f"| Dataset hash | `{(old or {}).get('dataset_hash', '—')[:19]}` | `{new['dataset_hash'][:19]}` |",
+        f"| Version | {was('version')} | {new['version']} |",
+        f"| Emulator | {was('emulator_class')} | {new['emulator_class']} |",
+        f"| Trained | {was('training_date')} | {new['training_date']} |",
+        f"| Rows | {was('n_train')} | {new['n_train']} |",
+        f"| Dataset hash | `{was('dataset_hash')[:19]}` | `{new['dataset_hash'][:19]}` |",
         "",
     ]
 
@@ -538,8 +547,9 @@ def main(argv: list[str] | None = None) -> int:
 
         higher_is_better = metric_name not in {"rmse", "mse", "mae", "msll", "crps"}
         if previous is None:
-            decision, rationale = "new", (
-                f"First version of `{config.model_id}` — no incumbent to beat."
+            decision, rationale = (
+                "new",
+                (f"First version of `{config.model_id}` — no incumbent to beat."),
             )
             promote = True
         else:
@@ -586,7 +596,7 @@ def main(argv: list[str] | None = None) -> int:
                 project=config.project,
                 description=description,
                 autoemulate_version=pkg_version("autoemulate"),
-                training_date=dt.datetime.now(dt.timezone.utc).date().isoformat(),
+                training_date=dt.datetime.now(dt.UTC).date().isoformat(),
                 stand_in=config.stand_in,
                 artifact=ArtifactSpec(
                     filename=ARTIFACT_NAME,
@@ -638,7 +648,7 @@ def main(argv: list[str] | None = None) -> int:
                 "metrics": metrics,
                 "emulator_class": result.model_name,
                 "supports_uq": supports_uq,
-                "training_date": dt.datetime.now(dt.timezone.utc).date().isoformat(),
+                "training_date": dt.datetime.now(dt.UTC).date().isoformat(),
                 "n_train": len(frame),
                 "dataset_hash": f"sha256:{dataset_hash}",
             },

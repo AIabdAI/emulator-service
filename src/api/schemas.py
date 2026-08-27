@@ -69,14 +69,6 @@ class ErrorResponse(BaseModel):
 # ------------------------------------------------------------------- manifest views
 
 
-class InputParameterView(BaseModel):
-    name: str
-    unit: str
-    min: float
-    max: float
-    description: str | None = None
-
-
 class ModelSummary(BaseModel):
     """What `GET /models` returns per entry."""
 
@@ -307,6 +299,4 @@ def validate_batch(
 
 def example_request(manifest: Manifest) -> dict[str, Any]:
     """A ready-to-paste request body using each parameter's domain midpoint."""
-    return {
-        "rows": [{p.name: round(p.midpoint, 6) for p in manifest.inputs}]
-    }
+    return {"rows": [{p.name: round(p.midpoint, 6) for p in manifest.inputs}]}

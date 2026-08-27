@@ -59,9 +59,7 @@ class InputParameter(_Strict):
     @model_validator(mode="after")
     def _check_bounds(self) -> InputParameter:
         if not self.max > self.min:
-            raise ValueError(
-                f"max ({self.max}) must be greater than min ({self.min})"
-            )
+            raise ValueError(f"max ({self.max}) must be greater than min ({self.min})")
         return self
 
     @property

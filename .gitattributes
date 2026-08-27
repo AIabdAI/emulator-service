@@ -1,0 +1,12 @@
+# Normalise text to LF in the repository. The CI runners, the Docker build and the
+# shell snippets inside the workflows are all POSIX; a CRLF that slips in from a Windows
+# editor turns a heredoc or a shebang into a confusing runtime failure.
+* text=auto eol=lf
+
+# Serialized emulators must never be touched by line-ending conversion.
+*.joblib binary
+*.parquet binary
+*.pkl binary
+*.db binary
+*.png binary
+*.jpg binary

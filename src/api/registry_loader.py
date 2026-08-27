@@ -149,9 +149,7 @@ def _discover_version_dirs(root: Path) -> list[Path]:
             if (version_dir / MANIFEST_FILENAME).is_file():
                 found.append(version_dir)
             else:
-                logger.warning(
-                    "skipping %s: no %s", version_dir, MANIFEST_FILENAME
-                )
+                logger.warning("skipping %s: no %s", version_dir, MANIFEST_FILENAME)
     return found
 
 
@@ -169,7 +167,7 @@ def _probe(manifest: Manifest, emulator: object, version_dir: Path) -> torch.dty
                 mean, variance = emulator.predict_mean_and_variance(
                     torch.tensor(midpoint, dtype=dtype)
                 )
-        except Exception as exc:  # noqa: BLE001 - reported verbatim below
+        except Exception as exc:
             last_error = exc
             continue
 
@@ -246,7 +244,7 @@ def load_entry(version_dir: Path) -> LoadedModel:
 
     try:
         emulator = AutoEmulate.load_model(artifact_path)
-    except Exception as exc:  # noqa: BLE001 - surfaced with full context
+    except Exception as exc:
         raise RegistryError(
             artifact_path,
             f"failed to deserialize the emulator (serialized with autoemulate "
