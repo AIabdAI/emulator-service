@@ -277,19 +277,23 @@ the service.
 
 ### Image size
 
-```
-emulator-service:local    1.71 GB
-```
+**1.25 GB**, as reported by the `docker build` job in CI (see the "Report image size"
+step of any run). Building locally on Docker Desktop reports 1.71 GB for the same
+Dockerfile, because buildx there produces a multi-platform manifest with attestation
+layers; the CI figure is the one a Linux deployment actually pulls.
 
-| Layer | Size |
+| Component | Size |
 |---|---|
 | Python venv (`/opt/venv`) | 1.21 GB |
-| `python:3.12-slim` base | ~500 MB |
+| ├─ PyTorch | 695 MB |
+| ├─ SciPy / NumPy / scikit-learn | ~190 MB |
+| └─ everything else | ~325 MB |
+| `python:3.12-slim` base | ~150 MB |
 | Registry + application code | 3.5 MB |
 
-Of the venv, **695 MB is PyTorch** and a further ~190 MB is SciPy/NumPy/scikit-learn.
-Those are the runtime an AutoEmulate emulator unpickles into; they are not removable
-without giving up the ability to load real artifacts.
+PyTorch and the SciPy stack are the runtime an AutoEmulate emulator unpickles into.
+They are not removable without giving up the ability to load real artifacts, which is
+why this README reports the size rather than claiming a small one.
 
 What *is* excluded is deliberate and enforced: 90 packages, **zero simulator
 libraries**. CI fails the build if `pybamm`, `openseespy` or `pvlib` ever appears:
