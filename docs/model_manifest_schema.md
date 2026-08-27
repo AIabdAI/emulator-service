@@ -165,8 +165,7 @@ At startup the loader, for every `registry/*/*/`:
 Any failure raises `RegistryError` naming **the path and the field**, e.g.
 
 ```
-registry/battery-capacity-fade/1.0.0/manifest.json: inputs[1]: max (5.0) must be greater
-than min (45.0)
+registry/battery-capacity-fade/1.0.0/manifest.json: inputs.1: Value error, max (5.0) must be greater than min (45.0)
 ```
 
 A model that fails validation is never served. Whether one bad model takes the whole

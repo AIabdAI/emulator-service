@@ -329,7 +329,7 @@ At startup, for every entry, the loader:
 Every failure names the path and the field:
 
 ```
-registry/battery-capacity-fade/1.0.0/manifest.json: inputs.1.max: max (5.0) must be greater than min (45.0)
+registry/battery-capacity-fade/1.0.0/manifest.json: inputs.1: Value error, max (5.0) must be greater than min (45.0)
 ```
 
 `REGISTRY_STRICT=true` (the default, and what compose uses) refuses to start on a bad
