@@ -252,7 +252,9 @@ Docker Desktop (WSL2). Single uvicorn worker, `OMP_NUM_THREADS=1`, CPU only.
 | 500 | 25.08 | 29.09 | 38.12 | 17.54 | 18,775 |
 
 **p95 for batch=100 is 11.4 ms end to end, of which ~6 ms is inference.** The rest is
-HTTP, JSON, and validation. Reproduce it yourself:
+HTTP, JSON, and validation. Run-to-run variance on a laptop is roughly ±10% — a repeat
+of the batch=100 row on a freshly rebuilt image gave p50 9.24 / p95 12.22. Reproduce it
+yourself:
 
 ```bash
 python scripts/loadtest.py --url http://localhost:8000 --batch 100 --requests 300

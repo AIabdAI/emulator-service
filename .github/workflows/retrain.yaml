@@ -118,25 +118,27 @@ jobs:
 
       - name: Explain what a human still has to do
         run: |
+          # Indented to stay inside the YAML block scalar; the block indent is stripped
+          # before the shell sees it, so EOF still lands in column 1.
           cat >> reports/report.md <<'EOF'
----
+          ---
 
-### How to act on this
+          ### How to act on this
 
-This workflow **does not promote anything**. It trained a candidate against a scratch
-registry and measured it; the registry on `main` is untouched.
+          This workflow **does not promote anything**. It trained a candidate against a
+          scratch registry and measured it; the registry on `main` is untouched.
 
-To promote a candidate that this report recommends:
+          To promote a candidate that this report recommends:
 
-```bash
-dvc pull                              # or: python training/make_standin_datasets.py
-python training/retrain.py --config <the config above>
-git add registry/ && git commit -m "Promote <model-id> <version>"
-```
+          ```bash
+          dvc pull                    # or: python training/make_standin_datasets.py
+          python training/retrain.py --config <the config above>
+          git add registry/ && git commit -m "Promote <model-id> <version>"
+          ```
 
-Then open a PR. A reviewer reads the metrics, the manifest diff and the dataset hash,
-and merges. Deployment is a merge, so a rollback is a revert.
-EOF
+          Then open a PR. A reviewer reads the metrics, the manifest diff and the
+          dataset hash, and merges. Deployment is a merge, so a rollback is a revert.
+          EOF
 
       - name: Post the report as a PR comment
         if: github.event_name == 'pull_request'

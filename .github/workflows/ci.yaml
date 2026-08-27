@@ -105,7 +105,7 @@ jobs:
       # The README quotes this number; a build that silently doubles it should be
       # visible in the job log rather than discovered months later.
       - name: Report image size
-        run: docker images emulator-service:ci --format 'image size: {{ .Size }}'
+        run: "docker images emulator-service:ci --format 'image size: {{ .Size }}'"
 
       - name: Smoke-test the running container
         run: |
