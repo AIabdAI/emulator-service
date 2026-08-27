@@ -43,7 +43,13 @@ type varies between a tensor and a `torch.distributions.Distribution` — is wha
 API return uncertainty uniformly for every emulator family.
 
 Inputs and outputs are `torch.Tensor` of shape `(n_batch, n_features)` /
-`(n_batch, n_targets)`, float64 by default.
+`(n_batch, n_targets)`. Precision is **not** uniform: AutoEmulate fits the exact
+Gaussian processes in float32, and passing them a float64 tensor raises
+`RuntimeError: expected m1 and m2 to have the same dtype` rather than upcasting. The
+loader therefore negotiates the dtype during the startup probe (float64 first, then
+float32) and reuses whatever worked for every subsequent request, so this never
+surfaces as a runtime failure. `training/retrain.py` performs the same negotiation, so
+what is probed at training time is what is served.
 
 ## `manifest.json` fields
 
