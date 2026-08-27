@@ -1,0 +1,47 @@
+[project]
+name = "emulator-service"
+version = "1.0.0"
+description = "Production serving and retraining platform for AutoEmulate scientific emulators"
+requires-python = ">=3.11"
+readme = "README.md"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+packages = ["api"]
+package-dir = { "" = "src" }
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]
+addopts = "-q --strict-markers"
+filterwarnings = [
+    # gpytorch/torch emit deprecation chatter during unpickling that is not ours to fix
+    "ignore::DeprecationWarning",
+    "ignore::UserWarning",
+]
+
+[tool.ruff]
+line-length = 90
+target-version = "py311"
+src = ["src", "training", "tests", "scripts"]
+
+[tool.ruff.lint]
+select = [
+    "E",    # pycodestyle
+    "F",    # pyflakes
+    "I",    # isort
+    "UP",   # pyupgrade
+    "B",    # bugbear
+    "C4",   # comprehensions
+    "SIM",  # simplify
+    "RUF",
+]
+ignore = [
+    "B008",  # FastAPI's Query()/Depends() in defaults is the documented idiom
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["E501"]

@@ -1,0 +1,35 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+build/
+dist/
+
+# Tooling caches
+.pytest_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# MLflow local backing store (the compose stack keeps its own named volume)
+mlruns/
+mlartifacts/
+
+# Generated reports (CI publishes these as PR comments, not commits)
+reports/
+
+# DVC: local cache, local remote, and machine-specific credentials.
+# `.dvc/config` IS committed; `.dvc/config.local` never is — see README.
+/.dvc/cache/
+/.dvc/tmp/
+/.dvc-storage/
+/.dvc/config.local
+
+# Datasets are DVC-tracked; the .dvc pointer files are what git carries.
+/training/data/*.csv
+/training/data/*.parquet
+
+# Local env overrides
+.env
