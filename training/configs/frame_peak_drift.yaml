@@ -1,0 +1,46 @@
+# Dataset config for the steel-frame peak-drift emulator.
+#
+# STAND-IN: the dataset is synthesised by training/make_standin_datasets.py from a
+# closed-form response surface, not from OpenSees. `stand_in: true` propagates into the
+# manifest and is surfaced by the API.
+
+model_id: frame-peak-drift
+project: frame-emulator
+description: Peak interstorey drift ratio of a steel moment frame under seismic demand.
+stand_in: true
+
+dataset:
+  path: training/data/frame_peak_drift.csv
+  format: csv
+
+inputs:
+  - name: pga
+    unit: g
+    description: Peak ground acceleration of the input motion.
+  - name: yield_strength
+    unit: MPa
+    description: Nominal yield strength of the frame steel.
+  - name: storey_mass
+    unit: t
+    description: Seismic mass lumped at each storey.
+  - name: damping_ratio
+    unit: dimensionless
+    description: Equivalent viscous damping ratio.
+
+output:
+  name: peak_drift_ratio
+  unit: percent
+  description: Maximum interstorey drift, as a percentage of storey height.
+
+training:
+  models: [GaussianProcessRBF, GaussianProcessMatern32]
+  n_splits: 4
+  n_iter: 4
+  random_seed: 42
+
+promotion:
+  metric: r2
+  min_improvement: 0.001
+  version_bump: minor
+
+mlflow_experiment: emulator-frame-peak-drift
