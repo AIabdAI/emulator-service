@@ -101,7 +101,11 @@ def main() -> int:
     for name in names:
         frame = DATASETS[name](n=args.n)
         path = args.out_dir / f"{name}.csv"
-        frame.to_csv(path, index=False, float_format="%.8g")
+        # lineterminator is not cosmetic: pandas defaults to the platform terminator,
+        # so the same seed produced CRLF on Windows and LF on Linux — different bytes,
+        # different sha256, and a manifest dataset hash that no other machine could
+        # reproduce. Pinning it to LF is what makes the reproducibility claim true.
+        frame.to_csv(path, index=False, float_format="%.8g", lineterminator="\n")
         print(f"wrote {path} ({len(frame)} rows, {len(frame.columns)} columns)")
     return 0
 

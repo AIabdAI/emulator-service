@@ -436,6 +436,15 @@ matches the manifest.
 python training/make_standin_datasets.py
 ```
 
+"Byte-reproducible" is a stronger claim than "same numbers", and it took a bug to get
+right. `pandas.to_csv` defaults to the *platform* line terminator, so the same seed
+produced CRLF on Windows and LF in CI — identical values, different bytes, different
+sha256, and a manifest hash no other machine could reproduce. The retrain workflow
+surfaced it on the first PR by reporting an incumbent and a candidate hash that
+disagreed. Pinning `lineterminator="
+"` fixed it; the Windows output now hashes to
+`0b725c57249d…`, the same digest the Linux runner produces.
+
 ---
 
 ## CI/CD

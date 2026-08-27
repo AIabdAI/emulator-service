@@ -12,7 +12,7 @@
     "format": "joblib",
     "emulator_class": "TransformedEmulator",
     "supports_uq": true,
-    "sha256": "1050f7b774f052223a525345aacb24a5f428d2eeaa9101f12a6eff79e3f7e1a1"
+    "sha256": "333d4b40b62b9291df0f0d80fc70e5a443b2ad6915a5fe5e457f516098ff3b9a"
   },
   "inputs": [
     {
@@ -54,7 +54,7 @@
     "rmse": 0.011281556449830532
   },
   "dataset": {
-    "hash": "sha256:9d7cdb2b1fee70ac6ce8b6abd7cd71d1ae6f7904ce55a7065d0b3af8494ab75f",
+    "hash": "sha256:5e2efda8cf4a65898fdfde9a16ea493ba4a3d2efa236683f64f7e4b92f7dd3d5",
     "n_train": 400,
     "path": "training/data/frame_peak_drift.csv"
   }
