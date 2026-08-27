@@ -277,19 +277,23 @@ the service.
 
 ### Image size
 
-```
-emulator-service:local    1.71 GB
-```
+**1.25 GB**, as reported by the `docker build` job in CI (see the "Report image size"
+step of any run). Building locally on Docker Desktop reports 1.71 GB for the same
+Dockerfile, because buildx there produces a multi-platform manifest with attestation
+layers; the CI figure is the one a Linux deployment actually pulls.
 
-| Layer | Size |
+| Component | Size |
 |---|---|
 | Python venv (`/opt/venv`) | 1.21 GB |
-| `python:3.12-slim` base | ~500 MB |
+| ├─ PyTorch | 695 MB |
+| ├─ SciPy / NumPy / scikit-learn | ~190 MB |
+| └─ everything else | ~325 MB |
+| `python:3.12-slim` base | ~150 MB |
 | Registry + application code | 3.5 MB |
 
-Of the venv, **695 MB is PyTorch** and a further ~190 MB is SciPy/NumPy/scikit-learn.
-Those are the runtime an AutoEmulate emulator unpickles into; they are not removable
-without giving up the ability to load real artifacts.
+PyTorch and the SciPy stack are the runtime an AutoEmulate emulator unpickles into.
+They are not removable without giving up the ability to load real artifacts, which is
+why this README reports the size rather than claiming a small one.
 
 What *is* excluded is deliberate and enforced: 90 packages, **zero simulator
 libraries**. CI fails the build if `pybamm`, `openseespy` or `pvlib` ever appears:
@@ -389,6 +393,12 @@ improvement, and `min_improvement` exists so that run-to-run noise cannot ratche
 model forward. On a genuine improvement the same run writes `registry/<id>/1.1.0/` —
 a new directory, never a modified one — and recommends **PROMOTE**.
 
+The same config retrained on a Linux CI runner gives RMSE 0.0505 against 0.0502 here,
+from identical data and an identical seed. GP fitting is not bit-reproducible across
+BLAS implementations, which is exactly why the promotion gate compares against a margin
+rather than against equality — and why `min_improvement` has to be larger than that
+platform noise to mean anything.
+
 Useful flags: `--dry-run` (evaluate and report, never write), `--registry <dir>` (write
 to a scratch registry — what CI does), `--no-mlflow`, `--report`/`--json`.
 
@@ -435,6 +445,15 @@ matches the manifest.
 ```bash
 python training/make_standin_datasets.py
 ```
+
+"Byte-reproducible" is a stronger claim than "same numbers", and it took a bug to get
+right. `pandas.to_csv` defaults to the *platform* line terminator, so the same seed
+produced CRLF on Windows and LF in CI — identical values, different bytes, different
+sha256, and a manifest hash no other machine could reproduce. The retrain workflow
+surfaced it on the first PR by reporting an incumbent and a candidate hash that
+disagreed. Pinning `lineterminator="
+"` fixed it; the Windows output now hashes to
+`0b725c57249d…`, the same digest the Linux runner produces.
 
 ---
 

@@ -12,7 +12,7 @@
     "format": "joblib",
     "emulator_class": "TransformedEmulator",
     "supports_uq": true,
-    "sha256": "3f3f215dd6d2311ad4c33bf320b94445c9cf78242e5e5cf9050285ea2879b853"
+    "sha256": "38214fc45994a54c4eb2813cd5183cbc4231a0013f49d5e8909ed0ad3d67e270"
   },
   "inputs": [
     {
@@ -47,7 +47,7 @@
     "rmse": 0.05024443194270134
   },
   "dataset": {
-    "hash": "sha256:d4ab70ca6d94b4577b4f6433e7d809b3582c1960bed9e5c2531125287612453c",
+    "hash": "sha256:0b725c57249da9aa90915d919ad7c07a237e1e47b3d28da7c682afcd2ecf3cb3",
     "n_train": 400,
     "path": "training/data/battery_capacity_fade.csv"
   }
