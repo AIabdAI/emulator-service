@@ -389,6 +389,12 @@ improvement, and `min_improvement` exists so that run-to-run noise cannot ratche
 model forward. On a genuine improvement the same run writes `registry/<id>/1.1.0/` —
 a new directory, never a modified one — and recommends **PROMOTE**.
 
+The same config retrained on a Linux CI runner gives RMSE 0.0505 against 0.0502 here,
+from identical data and an identical seed. GP fitting is not bit-reproducible across
+BLAS implementations, which is exactly why the promotion gate compares against a margin
+rather than against equality — and why `min_improvement` has to be larger than that
+platform noise to mean anything.
+
 Useful flags: `--dry-run` (evaluate and report, never write), `--registry <dir>` (write
 to a scratch registry — what CI does), `--no-mlflow`, `--report`/`--json`.
 
