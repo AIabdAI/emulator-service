@@ -1,0 +1,70 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint-and-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install CPU-only torch
+        run: pip install --index-url https://download.pytorch.org/whl/cpu "torch==2.13.0"
+
+      - name: Install dependencies
+        run: |
+          pip install -r requirements-serving.txt
+          pip install pytest ruff httpx pyyaml scikit-learn
+
+      - name: Ruff
+        run: ruff check src/ tests/ training/ scripts/
+
+      - name: Build a registry to test against
+        run: python scripts/build_registry.py --synthetic
+
+      - name: Pytest
+        run: pytest tests/ -q
+
+  docker-build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build the serving image
+        run: docker build -t emulator-service:ci .
+
+      - name: Report image size
+        run: docker images emulator-service:ci --format "Image size: {{.Size}}"
+
+      - name: Assert no simulator leaked into the serving image
+        run: |
+          docker run --rm emulator-service:ci python -c "
+          import importlib.util, sys
+          leaked = [m for m in ('pybamm', 'openseespy', 'pvlib')
+                    if importlib.util.find_spec(m) is not None]
+          if leaked:
+              sys.exit('Simulator packages present in the serving image: ' + ', '.join(leaked))
+          print('Serving image is simulator-free')
+          "
+
+      - name: Smoke-test the container
+        run: |
+          docker run -d --name api -p 8000:8000 emulator-service:ci
+          for i in $(seq 1 30); do
+            if curl -sf http://localhost:8000/health > /dev/null; then break; fi
+            sleep 2
+          done
+          curl -sf http://localhost:8000/health
+          docker rm -f api
