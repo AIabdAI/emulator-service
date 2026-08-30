@@ -1,0 +1,14 @@
+.git/
+.github/
+tests/
+training/
+scripts/
+docs/
+mlruns/
+mlartifacts/
+data/
+**/__pycache__/
+*.md
+.venv/
+.pytest_cache/
+.ruff_cache/
