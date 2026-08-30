@@ -1,0 +1,20 @@
+__pycache__/
+*.py[cod]
+.venv/
+.pytest_cache/
+.ruff_cache/
+
+# MLflow local tracking store and DVC cache
+mlruns/
+mlartifacts/
+.dvc/cache/
+.dvc/tmp/
+.dvc/config.local
+
+# Datasets are DVC-tracked, not git-tracked
+data/*
+!data/.gitkeep
+
+# Registry model binaries are large; manifests ARE committed.
+registry/**/emulator
+registry/**/*.pt
