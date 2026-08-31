@@ -66,3 +66,29 @@ def test_no_run_step_collapses_into_a_mapping(path: Path):
                     f"{path.name}:{job_name} step {i} has a non-string 'run' "
                     f"({type(step['run']).__name__}) -- quote it or use a block scalar"
                 )
+
+
+# --------------------------------------------------------------- registry builder
+
+
+def test_build_registry_is_idempotent_and_exits_zero():
+    """Re-running the builder on a populated registry is success, not failure.
+
+    Regression: the exit code used to report "did this run create something", so a
+    second run against the committed registry created nothing and exited 1. CI ran
+    `build_registry.py --synthetic` on a tree that already contained every model and
+    failed at that step.
+    """
+    import subprocess
+    import sys
+
+    repo = Path(__file__).resolve().parents[1]
+    result = subprocess.run(
+        [sys.executable, str(repo / "scripts" / "build_registry.py"), "--synthetic"],
+        capture_output=True, text=True, timeout=1800, cwd=str(repo),
+    )
+    assert result.returncode == 0, (
+        f"builder exited {result.returncode} on an already-populated registry\n"
+        f"{result.stdout[-2000:]}{result.stderr[-2000:]}"
+    )
+    assert "Registry now contains" in result.stdout
