@@ -15,6 +15,8 @@ mlartifacts/
 data/*
 !data/.gitkeep
 
-# Registry model binaries are large; manifests ARE committed.
-registry/**/emulator
-registry/**/*.pt
+# Registry artifacts ARE committed, deliberately: a clean clone must be able to run
+# `docker compose up` and answer the README's curl examples without first rebuilding
+# the registry from the sibling projects. The serialised GP emulators total ~9 MB,
+# which is an acceptable price for a working quickstart. If the registry ever grows
+# past that, move the binaries to DVC and keep the manifests in git.
