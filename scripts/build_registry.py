@@ -241,7 +241,19 @@ def main(argv: list[str] | None = None) -> int:
 
     n_versions = len(list(REGISTRY.glob("*/*/manifest.json")))
     print(f"\nRegistry now contains {n_versions} model version(s)")
-    return 0 if created else 1
+    if created:
+        print(f"Added this run: {', '.join(created)}")
+    else:
+        print("Added this run: nothing new -- every requested model was already present.")
+
+    # The exit code answers "is the registry usable?", not "did this run write
+    # something?". Re-running against an already-populated registry is the idempotent
+    # success case, and treating it as a failure broke CI: the committed registry
+    # already held every model, so `--synthetic` created nothing and exited 1.
+    if n_versions == 0:
+        print("ERROR: the registry is empty -- nothing was built and nothing was present.")
+        return 1
+    return 0
 
 
 if __name__ == "__main__":
