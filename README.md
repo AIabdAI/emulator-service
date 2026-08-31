@@ -1,5 +1,7 @@
 # emulator-service
 
+[![CI](https://github.com/AIabdAI/emulator-service/actions/workflows/ci.yaml/badge.svg)](https://github.com/AIabdAI/emulator-service/actions/workflows/ci.yaml)
+
 A production-grade serving and retraining platform for scientific emulators.
 
 Three sibling projects — [`battery-emulator`](https://github.com/AIabdAI/battery-emulator),
@@ -208,15 +210,30 @@ committed so the quickstart works on a clean clone. That is comfortably inside G
 limits, but it is also the point at which moving the binaries to DVC — keeping only the
 manifests in git — becomes the better answer if more projects are added.
 
-**Serving image size:** reported by CI on every build
-(`docker images emulator-service:ci --format "{{.Size}}"`). The image installs
-CPU-only torch from PyTorch's CPU index rather than the default wheel, which alone
-avoids roughly 2 GB of CUDA libraries the service cannot use.
+**Serving image size: 1.62 GB**, measured by the `docker-build` job in CI
+([run 33397128866](https://github.com/AIabdAI/emulator-service/actions/runs/33397128866)).
 
-> Docker was not available in the environment this repository was developed in, so the
-> image size is reported by CI rather than quoted here from a local build. The
-> `docker-build` job in `.github/workflows/ci.yaml` builds the image, prints its size,
-> asserts the image is simulator-free, and smoke-tests `/health` in the container.
+That is **not small**, and it would be dishonest to call the image lean. Installing
+CPU-only torch from PyTorch's CPU index instead of the default wheel avoids roughly 2 GB
+of CUDA libraries the service cannot use — without it the image would be well over 3 GB —
+but what remains is still dominated by torch and its transitive scientific stack. The
+simulators are genuinely absent (CI asserts it), so the remaining weight is the
+*inference* runtime, not the *simulation* one.
+
+Getting materially below this would mean exporting the emulators to a runtime that does
+not need torch at all — TorchScript alone would not help much, but ONNX Runtime would.
+That is real work and is not claimed here.
+
+CI verifies three things about the image on every build, and all three passed:
+
+```
+Image size: 1.62GB
+Serving image is simulator-free
+{"status":"ok","n_models_loaded":11,"registry_path":"/app/registry","autoemulate_version":"1.2.1"}
+```
+
+The last line is the containerised service answering `/health` — all 11 emulators loaded
+inside the image, from a clean build.
 
 ---
 
@@ -337,5 +354,8 @@ pipeline stays demonstrable.
 - `retrain.py` compares a single held-out R2 against the registered value. That is a
   reasonable gate, not a full model-quality review — which is exactly why promotion
   needs a human.
-- Docker build and the CML PR comment are exercised by the CI workflow definitions; they
-  were not run locally in this environment (no Docker daemon, no GitHub remote).
+- The **CML PR comment** in `retrain.yaml` has not been observed posting on a real PR;
+  the workflow runs and produces the report, but the comment step is only exercised on a
+  `pull_request` event against a configured token. The Docker build, the simulator-free
+  assertion and the container health check **are** verified — see the CI evidence above.
+- The image at 1.62 GB is heavier than a serving image ought to be; see the note above.
