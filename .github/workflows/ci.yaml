@@ -46,7 +46,10 @@ jobs:
         run: docker build -t emulator-service:ci .
 
       - name: Report image size
-        run: docker images emulator-service:ci --format "Image size: {{.Size}}"
+        # Block scalar, not a plain one: the ": " inside the format string would
+        # otherwise be parsed as a nested YAML mapping and break the whole workflow.
+        run: |
+          docker images emulator-service:ci --format "Image size: {{.Size}}"
 
       - name: Assert no simulator leaked into the serving image
         run: |
