@@ -2,8 +2,8 @@
 
 A production-grade serving and retraining platform for scientific emulators.
 
-Three sibling projects — [`battery-emulator`](../battery-emulator),
-[`frame-emulator`](../frame-emulator) and [`pv-emulator`](../pv-emulator) — each train
+Three sibling projects — [`battery-emulator`](https://github.com/AIabdAI/battery-emulator),
+[`frame-emulator`](https://github.com/AIabdAI/frame-emulator) and [`pv-emulator`](https://github.com/AIabdAI/pv-emulator) — each train
 AutoEmulate surrogates of an expensive physics simulator. This service wraps them in one
 versioned registry behind a validated REST API that returns predictions **with
 uncertainty**, plus containerisation, experiment tracking, and CI that proposes
