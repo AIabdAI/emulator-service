@@ -1,0 +1,41 @@
+{
+  "model_id": "synthetic-linear",
+  "version": "1.0.0",
+  "project": "synthetic-standin",
+  "description": "STAND-IN model trained on synthetic data, not a physical emulator",
+  "autoemulate_version": "1.2.1",
+  "emulator_model": "GaussianProcessRBF",
+  "training_date": "2026-08-30",
+  "dataset_hash": "synthetic-95ac2d6e953d76c0ded6de75a92d30f4",
+  "n_train": 160,
+  "n_test": 40,
+  "inputs": [
+    {
+      "name": "x1",
+      "unit": "-",
+      "min": 0.0,
+      "max": 1.0
+    },
+    {
+      "name": "x2",
+      "unit": "-",
+      "min": 0.0,
+      "max": 1.0
+    },
+    {
+      "name": "x3",
+      "unit": "-",
+      "min": 0.0,
+      "max": 1.0
+    }
+  ],
+  "output": {
+    "name": "y_linear",
+    "unit": "-"
+  },
+  "metrics": {
+    "r2": 0.999995,
+    "rmse": 0.002392
+  },
+  "artifact": "emulator"
+}

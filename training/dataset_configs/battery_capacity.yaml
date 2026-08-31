@@ -1,0 +1,25 @@
+# Retraining config for the battery capacity emulator. The dataset is DVC-tracked;
+# `dvc pull` materialises it before this pipeline runs.
+model_id: battery-capacity
+project: battery-emulator
+description: "Discharge capacity of a Li-ion cell from design and operating conditions"
+dataset: data/battery_dataset.parquet
+inputs:
+  - pos_electrode_thickness
+  - neg_electrode_thickness
+  - pos_particle_radius
+  - c_rate
+  - ambient_temperature_C
+output: capacity_Ah
+units:
+  pos_electrode_thickness: m
+  neg_electrode_thickness: m
+  pos_particle_radius: m
+  c_rate: "1/h"
+  ambient_temperature_C: degC
+  capacity_Ah: "A.h"
+seed: 42
+test_size: 0.2
+n_iter: 10
+n_splits: 3
+models: [GaussianProcessRBF, GaussianProcessMatern32, MLP, EnsembleMLP]

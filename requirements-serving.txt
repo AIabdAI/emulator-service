@@ -1,0 +1,9 @@
+# Serving dependencies ONLY. No pybamm, no openseespy, no pvlib -- the service loads
+# serialised emulators through AutoEmulate and never runs a simulation.
+# torch is installed separately from the CPU-only index (see Dockerfile).
+autoemulate==1.2.1
+fastapi==0.141.1
+uvicorn[standard]==0.52.4
+pydantic==2.13.5
+numpy>=2.0,<3
+pandas>=2.1,<3

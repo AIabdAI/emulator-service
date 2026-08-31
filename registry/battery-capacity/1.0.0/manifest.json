@@ -1,0 +1,59 @@
+{
+  "model_id": "battery-capacity",
+  "version": "1.0.0",
+  "project": "battery-emulator",
+  "description": "Discharge capacity emulated from 5 design parameters",
+  "autoemulate_version": "1.2.1",
+  "emulator_model": "GaussianProcessMatern32",
+  "training_date": "2026-08-31",
+  "dataset_hash": "5d445e4c1abb459ee128495806e5920e4c22fd46f4b2b2909cd00fd0f0578234",
+  "n_train": 480,
+  "n_test": 120,
+  "inputs": [
+    {
+      "name": "pos_electrode_thickness",
+      "unit": "m",
+      "min": 5.295050875048836e-05,
+      "max": 9.826965631138096e-05,
+      "description": "training-domain bounds taken from the sampled dataset"
+    },
+    {
+      "name": "neg_electrode_thickness",
+      "unit": "m",
+      "min": 5.9687968512635853e-05,
+      "max": 0.0001107451294363854,
+      "description": "training-domain bounds taken from the sampled dataset"
+    },
+    {
+      "name": "pos_particle_radius",
+      "unit": "m",
+      "min": 3.6556029231971413e-06,
+      "max": 6.78174018759255e-06,
+      "description": "training-domain bounds taken from the sampled dataset"
+    },
+    {
+      "name": "c_rate",
+      "unit": "1/h",
+      "min": 0.5033917732505179,
+      "max": 2.999856370863197,
+      "description": "training-domain bounds taken from the sampled dataset"
+    },
+    {
+      "name": "ambient_temperature_C",
+      "unit": "degC",
+      "min": 5.024352111999961,
+      "max": 44.97545117425011,
+      "description": "training-domain bounds taken from the sampled dataset"
+    }
+  ],
+  "output": {
+    "name": "capacity_Ah",
+    "unit": "A.h",
+    "description": "Discharge capacity"
+  },
+  "metrics": {
+    "r2": 0.974919,
+    "rmse": 0.269283
+  },
+  "artifact": "emulator"
+}

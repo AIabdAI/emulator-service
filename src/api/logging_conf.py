@@ -1,84 +1,51 @@
 """Structured JSON logging.
 
-One JSON object per line on stdout, which is what a container orchestrator, a log
-shipper or `docker compose logs | jq` all expect. Deliberately dependency-free: the
-serving image should not carry a logging library it does not need.
+Every request is logged as one JSON object so the logs are queryable by a collector
+without regex-scraping a human-readable format.
 """
 
 from __future__ import annotations
 
-import contextvars
-import datetime as dt
 import json
 import logging
-import os
 import sys
-from typing import Any
+from datetime import UTC, datetime
 
-SERVICE_NAME = os.environ.get("SERVICE_NAME", "emulator-service")
-
-#: Set per request by the logging middleware so every log line in a request is joinable.
-request_id_var: contextvars.ContextVar[str | None] = contextvars.ContextVar(
-    "request_id", default=None
-)
-
-_RESERVED = set(logging.LogRecord("", 0, "", 0, "", (), None).__dict__) | {
-    "asctime",
-    "message",
-    "taskName",
+#: Attributes present on every LogRecord; anything else was attached by the caller and
+#: is treated as structured context to be merged into the JSON payload.
+_STANDARD = {
+    "name", "msg", "args", "levelname", "levelno", "pathname", "filename", "module",
+    "exc_info", "exc_text", "stack_info", "lineno", "funcName", "created", "msecs",
+    "relativeCreated", "thread", "threadName", "processName", "process", "taskName",
 }
 
 
 class JsonFormatter(logging.Formatter):
-    """Render a log record as a single JSON line, including any `extra=` fields."""
-
     def format(self, record: logging.LogRecord) -> str:
-        payload: dict[str, Any] = {
-            "timestamp": dt.datetime.fromtimestamp(record.created, tz=dt.UTC).isoformat(
+        payload = {
+            "timestamp": datetime.fromtimestamp(record.created, UTC).isoformat(
                 timespec="milliseconds"
             ),
             "level": record.levelname,
-            "service": SERVICE_NAME,
             "logger": record.name,
             "message": record.getMessage(),
         }
-
-        request_id = request_id_var.get()
-        if request_id is not None:
-            payload["request_id"] = request_id
-
         for key, value in record.__dict__.items():
-            if key not in _RESERVED and not key.startswith("_"):
+            if key not in _STANDARD and not key.startswith("_"):
                 payload[key] = value
-
         if record.exc_info:
             payload["exception"] = self.formatException(record.exc_info)
-
         return json.dumps(payload, default=str)
 
 
-def configure_logging(level: str | None = None) -> None:
-    """Install the JSON formatter on the root logger and on uvicorn's loggers.
-
-    Idempotent: calling it twice does not double up handlers, so reload-mode uvicorn
-    and the test client both stay quiet.
-    """
-    level = (level or os.environ.get("LOG_LEVEL", "INFO")).upper()
-
+def configure_logging(level: str = "INFO") -> None:
     handler = logging.StreamHandler(sys.stdout)
     handler.setFormatter(JsonFormatter())
-
     root = logging.getLogger()
-    for existing in list(root.handlers):
-        root.removeHandler(existing)
-    root.addHandler(handler)
-    root.setLevel(level)
-
-    # uvicorn installs its own handlers; strip them so access logs are JSON too.
+    root.handlers = [handler]
+    root.setLevel(getattr(logging, level.upper(), logging.INFO))
+    # uvicorn installs its own handlers; route them through ours instead.
     for name in ("uvicorn", "uvicorn.error", "uvicorn.access"):
-        uvicorn_logger = logging.getLogger(name)
-        uvicorn_logger.handlers.clear()
-        uvicorn_logger.propagate = True
-
-    # The access log duplicates our own request log line, with less information.
-    logging.getLogger("uvicorn.access").disabled = True
+        logger = logging.getLogger(name)
+        logger.handlers = []
+        logger.propagate = True

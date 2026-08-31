@@ -1,180 +1,113 @@
-# Model manifest schema (v1)
+# Model manifest schema
 
-Every model in the registry is a **directory**, not a file. The directory carries the
-serialized AutoEmulate emulator plus a `manifest.json` that describes it well enough for
-the service to validate requests, report provenance and refuse to serve nonsense —
-without ever importing the simulator that produced the training data.
-
-## Registry layout
+Every model in the registry is a **directory** containing exactly two things:
 
 ```
-registry/
-└── <model_id>/                  # stable, kebab-case identity of a modelled quantity
-    └── <version>/               # semantic version, e.g. 1.0.0 — immutable once written
-        ├── manifest.json        # this schema
-        ├── model.joblib         # joblib-serialized autoemulate Emulator
-        └── model_metadata.csv   # optional: AutoEmulate Result metadata (params/metrics)
+registry/<model_id>/<version>/
+├── emulator          # the serialised AutoEmulate emulator (opaque to the service)
+└── manifest.json     # this schema
 ```
 
-Rules:
+The manifest is the contract between the projects that *train* emulators and the
+service that *serves* them. The service refuses to load a model whose manifest does not
+validate, and refuses to score inputs that fall outside the bounds the manifest
+declares.
 
-- A `<model_id>/<version>/` directory is **immutable**. Retraining writes a *new* version
-  directory; it never overwrites an existing one (`training/retrain.py` enforces this).
-- `manifest.json` is validated at service startup. A malformed manifest fails loudly with
-  a message naming the file and the offending field — it does not silently skip the model.
-- The registry is the single source of truth for input bounds. The API derives its
-  validation from the manifest, so a model cannot be queried outside its training domain.
+## Why the bounds live in the manifest
 
-## Serialization contract (AutoEmulate 1.2.1)
+An emulator queried outside its training domain does not fail — it extrapolates, and
+returns a confident-looking number that is simply wrong. That is the single most
+dangerous failure mode of a surrogate model in production. Putting the training-domain
+bounds in the manifest and enforcing them at the API boundary makes that failure
+*impossible to reach* rather than merely documented.
 
-Verified against the installed package (`autoemulate.core.save.ModelSerialiser`,
-`autoemulate.core.compare.AutoEmulate`):
-
-| Operation | Call | Notes |
-|---|---|---|
-| Save | `AutoEmulate.save(result_or_emulator, path, use_timestamp=False)` | `joblib.dump` of the `Emulator`; writes `<name>_metadata.csv` alongside when given a `Result` |
-| Load | `AutoEmulate.load_model(path)` | **staticmethod** — no `AutoEmulate` instance, no simulator, no training data needed |
-| Predict + UQ | `emulator.predict_mean_and_variance(x)` | returns `(mean, variance)`; `variance is None` when the emulator does not support UQ |
-
-`predict_mean_and_variance` is defined on `autoemulate.emulators.base.Emulator` and
-specialised by `DeterministicEmulator` (variance `None`) and `ProbabilisticEmulator`
-(variance tensor). Serving against this one method — rather than `predict()`, whose return
-type varies between a tensor and a `torch.distributions.Distribution` — is what lets the
-API return uncertainty uniformly for every emulator family.
-
-Inputs and outputs are `torch.Tensor` of shape `(n_batch, n_features)` /
-`(n_batch, n_targets)`. Precision is **not** uniform: AutoEmulate fits the exact
-Gaussian processes in float32, and passing them a float64 tensor raises
-`RuntimeError: expected m1 and m2 to have the same dtype` rather than upcasting. The
-loader therefore negotiates the dtype during the startup probe (float64 first, then
-float32) and reuses whatever worked for every subsequent request, so this never
-surfaces as a runtime failure. `training/retrain.py` performs the same negotiation, so
-what is probed at training time is what is served.
-
-## `manifest.json` fields
+## Schema
 
 | Field | Type | Required | Description |
 |---|---|---|---|
-| `schema_version` | `int` | yes | Manifest schema version. Currently `1`. |
-| `model_id` | `str` | yes | Stable id, `^[a-z0-9][a-z0-9-]*$`. Must equal the parent directory name. |
-| `version` | `str` | yes | Semantic version `MAJOR.MINOR.PATCH`. Must equal the directory name. |
-| `project` | `str` | yes | Sibling project of origin, e.g. `battery-emulator`. |
-| `description` | `str` | no | One line, human-facing. |
-| `autoemulate_version` | `str` | yes | Version the artifact was serialized with. Startup warns on mismatch with the installed runtime. |
-| `training_date` | `str` | yes | ISO-8601 date or datetime, UTC. |
-| `artifact` | `object` | yes | See [Artifact](#artifact). |
-| `inputs` | `array` | yes | Ordered; **column order is the tensor column order**. See [Input parameter](#input-parameter). |
-| `output` | `object` | yes | See [Output](#output). |
-| `metrics` | `object` | yes | Held-out metrics. `r2` and `rmse` required. |
-| `dataset` | `object` | yes | See [Dataset](#dataset). |
-| `stand_in` | `bool` | no | `true` marks a synthetic development artifact, not a real scientific emulator. Surfaced by the API. Defaults to `false`. |
+| `model_id` | string | yes | Registry-unique id, `^[a-z0-9][a-z0-9_-]*$` |
+| `version` | string | yes | Semantic version, `MAJOR.MINOR.PATCH` |
+| `project` | string | yes | Project of origin (e.g. `battery-emulator`) |
+| `description` | string | no | One line, human-facing |
+| `autoemulate_version` | string | yes | Version the artifact was serialised with |
+| `emulator_model` | string | yes | Winning model class (e.g. `GaussianProcessMatern32`) |
+| `training_date` | string (ISO 8601) | yes | UTC date the emulator was fitted |
+| `dataset_hash` | string | yes | SHA-256 of the training dataset file |
+| `n_train` / `n_test` | integer | yes | Split sizes |
+| `inputs` | array of Input | yes | Ordered; the order **is** the feature order |
+| `output` | Output | yes | This registry serves one named output per model |
+| `metrics` | Metrics | yes | Held-out performance |
+| `artifact` | string | no | Filename of the serialised emulator (default `emulator`) |
 
-### Artifact
-
-| Field | Type | Required | Description |
-|---|---|---|---|
-| `filename` | `str` | yes | Relative to the version directory. Must exist. Must not escape it. |
-| `format` | `str` | yes | `joblib` (only supported value). |
-| `emulator_class` | `str` | yes | e.g. `GaussianProcessExact`. Informational; checked against the loaded object at startup. |
-| `supports_uq` | `bool` | yes | Whether `predict_mean_and_variance` returns a variance. Cross-checked against the loaded emulator. |
-| `sha256` | `str` | no | Hex digest of the artifact file, verified at load when present. |
-
-### Input parameter
+### Input
 
 | Field | Type | Required | Description |
 |---|---|---|---|
-| `name` | `str` | yes | Request field name. Unique within the manifest. |
-| `unit` | `str` | yes | Physical unit, or `"dimensionless"`. Echoed in errors and `/models/{id}`. |
-| `min` | `number` | yes | Inclusive lower bound of the training domain. |
-| `max` | `number` | yes | Inclusive upper bound. Must be `> min`. |
-| `description` | `str` | no | One line. |
-
-Bounds are the **training domain**, not physical limits. An emulator queried outside the
-region it was fitted on is not merely imprecise — it is confidently, silently wrong. The
-API therefore rejects out-of-domain rows with `422` rather than extrapolating.
+| `name` | string | yes | Feature name used in the request payload |
+| `unit` | string | yes | Physical unit; `-` for dimensionless |
+| `min` / `max` | number | yes | Training-domain bounds; `min < max` enforced |
+| `description` | string | no | |
 
 ### Output
 
-| Field | Type | Required | Description |
-|---|---|---|---|
-| `name` | `str` | yes | Predicted quantity. |
-| `unit` | `str` | yes | Physical unit, or `"dimensionless"`. |
-| `description` | `str` | no | One line. |
-
-Single-output emulators only in schema v1. A multi-output model would extend this to an
-`outputs` array; the loader rejects an artifact whose predicted width is not 1 so the
-mismatch cannot pass silently.
+| Field | Type | Required |
+|---|---|---|
+| `name` | string | yes |
+| `unit` | string | yes |
+| `description` | string | no |
 
 ### Metrics
 
 | Field | Type | Required | Description |
 |---|---|---|---|
-| `r2` | `number` | yes | Held-out coefficient of determination. |
-| `rmse` | `number` | yes | Held-out RMSE, in the output unit. `>= 0`. |
-| `n_test` | `int` | no | Held-out set size. |
-
-Extra numeric keys are permitted and passed through.
-
-### Dataset
-
-| Field | Type | Required | Description |
-|---|---|---|---|
-| `hash` | `str` | yes | `sha256:<hex>` of the training file. Ties the model to exact data. |
-| `n_train` | `int` | no | Training row count. |
-| `path` | `str` | no | DVC-tracked path the hash refers to. |
+| `r2` | number | yes | Coefficient of determination on held-out data |
+| `rmse` | number | yes | Root mean squared error, in the output's unit |
 
 ## Example
 
 ```json
 {
-  "schema_version": 1,
-  "model_id": "battery-capacity-fade",
+  "model_id": "battery-capacity",
   "version": "1.0.0",
   "project": "battery-emulator",
-  "description": "Stand-in emulator for capacity fade after 500 cycles.",
+  "description": "Discharge capacity of a Li-ion cell from design and operating conditions",
   "autoemulate_version": "1.2.1",
-  "training_date": "2026-08-27",
-  "stand_in": true,
-  "artifact": {
-    "filename": "model.joblib",
-    "format": "joblib",
-    "emulator_class": "GaussianProcessExact",
-    "supports_uq": true,
-    "sha256": "6f1e..."
-  },
+  "emulator_model": "GaussianProcessMatern32",
+  "training_date": "2026-08-30",
+  "dataset_hash": "9f2c...",
+  "n_train": 480,
+  "n_test": 120,
   "inputs": [
-    {"name": "c_rate", "unit": "1/h", "min": 0.2, "max": 3.0,
-     "description": "Charge/discharge rate."},
-    {"name": "temperature", "unit": "degC", "min": 5.0, "max": 45.0,
-     "description": "Ambient cell temperature."}
+    {"name": "pos_electrode_thickness", "unit": "m", "min": 5.292e-05, "max": 9.828e-05},
+    {"name": "neg_electrode_thickness", "unit": "m", "min": 5.964e-05, "max": 1.1076e-04},
+    {"name": "pos_particle_radius", "unit": "m", "min": 3.654e-06, "max": 6.786e-06},
+    {"name": "c_rate", "unit": "1/h", "min": 0.5, "max": 3.0},
+    {"name": "ambient_temperature_C", "unit": "degC", "min": 5.0, "max": 45.0}
   ],
-  "output": {"name": "capacity_fade", "unit": "percent",
-             "description": "Capacity lost after 500 cycles."},
-  "metrics": {"r2": 0.987, "rmse": 0.42, "n_test": 80},
-  "dataset": {"hash": "sha256:9ab3...", "n_train": 320,
-              "path": "training/data/battery_capacity_fade.csv"}
+  "output": {"name": "capacity_Ah", "unit": "A.h"},
+  "metrics": {"r2": 0.9749, "rmse": 0.2693},
+  "artifact": "emulator"
 }
 ```
 
-## Validation and failure behaviour
+## Versioning rules
 
-At startup the loader, for every `registry/*/*/`:
+* `model_id` identifies a *conceptual* model (`battery-capacity`); `version` identifies
+  one trained artifact of it.
+* A version directory is **immutable**. Retraining always writes a new version
+  directory; the training pipeline refuses to overwrite an existing one.
+* The API's `/models/{model_id}` serves the **highest** semantic version by default;
+  any specific version can be addressed with `?version=1.0.0`.
 
-1. reads and JSON-parses `manifest.json`;
-2. validates it against this schema (Pydantic v2, `extra="forbid"` on nested objects);
-3. checks `model_id` / `version` match the directory names;
-4. checks the artifact file exists, and its `sha256` if declared;
-5. `joblib`-loads the emulator via `AutoEmulate.load_model`;
-6. runs one probe prediction at the bounds midpoint to confirm the emulator accepts
-   `len(inputs)` features, returns width 1, and agrees with `supports_uq`.
+## Validation performed at startup
 
-Any failure raises `RegistryError` naming **the path and the field**, e.g.
+1. `manifest.json` parses as JSON and satisfies the Pydantic model.
+2. `version` and the parent directory name agree.
+3. Every input has `min < max`.
+4. The artifact file named by `artifact` exists.
+5. The emulator deserialises, and a probe prediction at the *midpoint* of the declared
+   bounds returns a finite mean and a non-negative variance.
 
-```
-registry/battery-capacity-fade/1.0.0/manifest.json: inputs.1: Value error, max (5.0) must be greater than min (45.0)
-```
-
-A model that fails validation is never served. Whether one bad model takes the whole
-service down or is quarantined is a deployment choice: `strict=True` (the default, and
-what `docker compose` uses) fails startup, so a broken registry cannot masquerade as a
-healthy one; `strict=False` loads what it can and reports the failures on `/health`.
+A model that fails any check is skipped with a named, actionable log message; the rest
+of the registry still loads. A registry with zero loadable models starts the service in
+a state where `/health` reports `degraded`, so an orchestrator can act on it.
