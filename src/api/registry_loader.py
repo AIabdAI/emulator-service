@@ -1,310 +1,272 @@
-"""File-based model registry: discovery, validation, loading and prediction.
+"""File-based model registry: discovery, validation, loading, and bounds enforcement.
 
-The registry is a directory tree (``registry/<model_id>/<version>/``) rather than a
-database. Every entry is validated *at startup* — manifest schema, artifact presence,
-optional checksum, and a probe prediction — so that a broken model is discovered on
-deploy rather than on a user's request.
+A file-based registry is deliberate (see the README's design-decisions section): the
+whole registry is a directory of manifests, so it diffs in code review, versions in
+git, and needs no database to stand up locally.
 
-Nothing here imports a simulator. Loading an AutoEmulate emulator needs only
-``AutoEmulate.load_model`` (a staticmethod) and the emulator classes themselves.
+Nothing here imports a simulator. The service loads emulators with AutoEmulate alone,
+which is what keeps `pybamm`, `openseespy` and `pvlib` out of the serving image.
 """
 
 from __future__ import annotations
 
+import json
 import logging
+import math
 import os
 from dataclasses import dataclass, field
 from pathlib import Path
 
-import torch
-from autoemulate import AutoEmulate
+import numpy as np
 
-from .manifest import (
-    MANIFEST_FILENAME,
-    Manifest,
-    RegistryError,
-    load_manifest,
-    sha256_file,
-)
+from .schemas import Manifest
 
-logger = logging.getLogger(__name__)
+log = logging.getLogger("emulator-service.registry")
 
-DEFAULT_REGISTRY_PATH = Path(
-    os.environ.get("REGISTRY_PATH", Path(__file__).resolve().parents[2] / "registry")
-)
+DEFAULT_REGISTRY = Path(__file__).resolve().parents[2] / "registry"
 
 
-def installed_autoemulate_version() -> str:
-    from importlib.metadata import version
+class BoundsError(ValueError):
+    """Raised when an input row falls outside the manifest's declared training domain."""
 
-    return version("autoemulate")
+    def __init__(self, parameter: str, value: float, low: float, high: float, row: int):
+        self.parameter = parameter
+        self.value = value
+        self.low = low
+        self.high = high
+        self.row = row
+        reason = (
+            "is not a finite number"
+            if not math.isfinite(value)
+            else f"is outside its valid range [{low}, {high}]"
+        )
+        super().__init__(
+            f"row {row}: parameter {parameter!r} = {value} {reason}. "
+            "The emulator was never trained there and would extrapolate."
+        )
 
 
-def _version_sort_key(version: str) -> tuple[int, ...]:
-    return tuple(int(part) for part in version.split("."))
+class MissingInputError(ValueError):
+    def __init__(self, missing: list[str], row: int):
+        self.missing = missing
+        self.row = row
+        super().__init__(f"row {row}: missing required input(s): {', '.join(sorted(missing))}")
+
+
+class UnknownInputError(ValueError):
+    def __init__(self, unknown: list[str], row: int, expected: list[str]):
+        self.unknown = unknown
+        self.row = row
+        super().__init__(
+            f"row {row}: unknown input(s): {', '.join(sorted(unknown))}. "
+            f"Expected exactly: {', '.join(expected)}"
+        )
 
 
 @dataclass
 class LoadedModel:
-    """A validated manifest paired with its deserialized, ready-to-serve emulator."""
-
     manifest: Manifest
     emulator: object
-    directory: Path
-    dtype: torch.dtype = torch.float64
+    path: Path
 
-    @property
-    def model_id(self) -> str:
-        return self.manifest.model_id
+    def validate_batch(self, rows: list[dict[str, float]]) -> np.ndarray:
+        """Validate a batch against the manifest and return the ordered feature matrix.
 
-    @property
-    def version(self) -> str:
-        return self.manifest.version
-
-    @property
-    def key(self) -> tuple[str, str]:
-        return (self.model_id, self.version)
-
-    def to_tensor(self, rows: list[list[float]]) -> torch.Tensor:
-        return torch.tensor(rows, dtype=self.dtype)
-
-    def predict(self, rows: list[list[float]]) -> tuple[list[float], list[float] | None]:
-        """Predict a batch, returning per-row mean and standard deviation.
-
-        Returns ``(means, stds)`` with ``stds`` set to ``None`` for emulators that do
-        not support uncertainty quantification — the API surfaces that as an explicit
-        null rather than inventing a zero.
+        Raises before any value reaches the emulator. Feature order comes from the
+        manifest, not from the caller's dict ordering.
         """
-        x = self.to_tensor(rows)
-        with torch.inference_mode():
-            mean, variance = self.emulator.predict_mean_and_variance(x)
-        means = mean.reshape(-1).to(torch.float64).tolist()
-        if variance is None:
-            return means, None
-        # Variance can dip marginally below zero through floating-point noise in the
-        # GP posterior; clamp before the square root rather than emitting NaN.
-        stds = variance.reshape(-1).clamp_min(0.0).sqrt().to(torch.float64).tolist()
-        return means, stds
+        expected = self.manifest.input_names
+        matrix = np.empty((len(rows), len(expected)), dtype=np.float64)
+
+        for r, row in enumerate(rows):
+            missing = [n for n in expected if n not in row]
+            if missing:
+                raise MissingInputError(missing, r)
+            unknown = [n for n in row if n not in expected]
+            if unknown:
+                raise UnknownInputError(unknown, r, expected)
+
+            for c, spec in enumerate(self.manifest.inputs):
+                value = float(row[spec.name])
+                if not np.isfinite(value):
+                    raise BoundsError(spec.name, value, spec.min, spec.max, r)
+                if value < spec.min or value > spec.max:
+                    raise BoundsError(spec.name, value, spec.min, spec.max, r)
+                matrix[r, c] = value
+        return matrix
+
+    def predict(self, matrix: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+        """Return per-row (mean, std).
+
+        AutoEmulate emulators return a ``torch.distributions.Distribution`` with
+        ``.mean`` / ``.variance`` when probabilistic, and a plain tensor otherwise.
+        A deterministic emulator reports zero uncertainty rather than a fabricated one.
+
+        The type check must be ``isinstance(out, Distribution)``, **not**
+        ``hasattr(out, "mean")``: ``torch.Tensor`` also has a ``.mean`` attribute -- it
+        is a bound method -- so the duck-typed check silently misclassifies every
+        deterministic emulator and then fails converting a method to a float.
+        """
+        import torch
+        from torch.distributions import Distribution
+
+        tensor = torch.tensor(matrix, dtype=torch.float32)
+        with torch.no_grad():
+            out = self.emulator.predict(tensor)
+        if isinstance(out, Distribution):
+            mean = np.asarray(out.mean, dtype=float).reshape(len(matrix), -1)[:, 0]
+            std = np.sqrt(
+                np.clip(np.asarray(out.variance, dtype=float), 0.0, None)
+            ).reshape(len(matrix), -1)[:, 0]
+        else:
+            mean = np.asarray(out, dtype=float).reshape(len(matrix), -1)[:, 0]
+            std = np.zeros_like(mean)
+        return mean, std
 
 
 @dataclass
-class RegistryLoadFailure:
-    """A registry entry that could not be loaded, kept for reporting on /health."""
-
-    path: str
-    error: str
-
-
-@dataclass
-class ModelRegistry:
-    """In-memory view of the on-disk registry, built once at startup."""
+class Registry:
+    """All loadable model versions, keyed by ``model_id`` then ``version``."""
 
     root: Path
-    models: dict[tuple[str, str], LoadedModel] = field(default_factory=dict)
-    failures: list[RegistryLoadFailure] = field(default_factory=list)
+    models: dict[str, dict[str, LoadedModel]] = field(default_factory=dict)
+    errors: list[str] = field(default_factory=list)
 
-    # -- lookup ---------------------------------------------------------------
+    # ------------------------------------------------------------------ lookup
 
-    @property
     def model_ids(self) -> list[str]:
-        return sorted({model_id for model_id, _ in self.models})
+        return sorted(self.models)
 
     def versions(self, model_id: str) -> list[str]:
-        found = [v for mid, v in self.models if mid == model_id]
-        return sorted(found, key=_version_sort_key)
-
-    def latest_version(self, model_id: str) -> str | None:
-        versions = self.versions(model_id)
-        return versions[-1] if versions else None
-
-    def get(self, model_id: str, version: str | None = None) -> LoadedModel | None:
-        """Resolve a model by id, defaulting to its highest semantic version."""
-        if version is None:
-            version = self.latest_version(model_id)
-            if version is None:
-                return None
-        return self.models.get((model_id, version))
-
-    def all_models(self) -> list[LoadedModel]:
+        if model_id not in self.models:
+            return []
         return [
-            self.models[key]
-            for key in sorted(self.models, key=lambda k: (k[0], _version_sort_key(k[1])))
+            m.manifest.version
+            for m in sorted(
+                self.models[model_id].values(), key=lambda m: m.manifest.version_tuple
+            )
         ]
 
-    def __len__(self) -> int:
-        return len(self.models)
+    def get(self, model_id: str, version: str | None = None) -> LoadedModel | None:
+        by_version = self.models.get(model_id)
+        if not by_version:
+            return None
+        if version is not None:
+            return by_version.get(version)
+        # Default to the highest semantic version.
+        return max(by_version.values(), key=lambda m: m.manifest.version_tuple)
+
+    @property
+    def n_loaded(self) -> int:
+        return sum(len(v) for v in self.models.values())
 
 
-def _discover_version_dirs(root: Path) -> list[Path]:
-    """Find every `<root>/<model_id>/<version>/` directory holding a manifest."""
+def resolve_artifact(version_dir: Path, artifact_name: str) -> Path | None:
+    """Locate a serialised emulator inside a version directory.
+
+    ``AutoEmulate.save(result, path)`` does not write ``path``: it writes
+    ``path.joblib`` alongside ``path_metadata.csv``, and returns the extensionless
+    stem, which ``load_model`` also accepts. The manifest therefore names the stem, and
+    existence has to be checked against the real file on disk.
+    """
+    stem = version_dir / artifact_name
+    if stem.is_file():
+        return stem
+    joblib = stem.with_suffix(".joblib")
+    if joblib.is_file():
+        return stem  # hand load_model the stem it expects
+    return None
+
+
+def _probe(model: LoadedModel) -> None:
+    """Predict at the midpoint of the declared bounds; a model that cannot is unusable."""
+    midpoint = np.array([[s.midpoint for s in model.manifest.inputs]], dtype=np.float64)
+    mean, std = model.predict(midpoint)
+    if not np.isfinite(mean).all():
+        raise ValueError("probe prediction returned a non-finite mean")
+    if (std < 0).any():
+        raise ValueError("probe prediction returned a negative standard deviation")
+
+
+def load_registry(root: str | Path | None = None, probe: bool = True) -> Registry:
+    """Discover and validate every ``<model_id>/<version>/manifest.json`` under ``root``.
+
+    A model that fails validation is skipped with an actionable message; the rest of the
+    registry still loads, so one bad manifest cannot take the service down.
+    """
+    root = Path(root or os.environ.get("REGISTRY_PATH") or DEFAULT_REGISTRY).resolve()
+    registry = Registry(root=root)
+
     if not root.is_dir():
-        raise RegistryError(root, "registry directory does not exist")
-    found: list[Path] = []
-    for model_dir in sorted(p for p in root.iterdir() if p.is_dir()):
-        if model_dir.name.startswith(".") or model_dir.name == "__pycache__":
+        registry.errors.append(f"Registry path does not exist: {root}")
+        log.error("Registry path does not exist: %s", root)
+        return registry
+
+    from autoemulate import AutoEmulate
+
+    for manifest_path in sorted(root.glob("*/*/manifest.json")):
+        version_dir = manifest_path.parent
+        try:
+            raw = json.loads(manifest_path.read_text(encoding="utf-8"))
+        except json.JSONDecodeError as exc:
+            registry.errors.append(f"{manifest_path}: invalid JSON ({exc})")
+            log.error("Skipping %s: invalid JSON: %s", manifest_path, exc)
             continue
-        for version_dir in sorted(p for p in model_dir.iterdir() if p.is_dir()):
-            if version_dir.name.startswith("."):
+
+        try:
+            manifest = Manifest.model_validate(raw)
+        except Exception as exc:  # noqa: BLE001 - report the field-level reason verbatim
+            registry.errors.append(f"{manifest_path}: schema validation failed ({exc})")
+            log.error("Skipping %s: manifest failed validation: %s", manifest_path, exc)
+            continue
+
+        if manifest.version != version_dir.name:
+            msg = (
+                f"{manifest_path}: manifest version {manifest.version!r} does not match "
+                f"its directory name {version_dir.name!r}"
+            )
+            registry.errors.append(msg)
+            log.error("Skipping %s", msg)
+            continue
+
+        if manifest.model_id != version_dir.parent.name:
+            msg = (
+                f"{manifest_path}: model_id {manifest.model_id!r} does not match "
+                f"its directory name {version_dir.parent.name!r}"
+            )
+            registry.errors.append(msg)
+            log.error("Skipping %s", msg)
+            continue
+
+        artifact = resolve_artifact(version_dir, manifest.artifact)
+        if artifact is None:
+            registry.errors.append(f"{manifest_path}: artifact {manifest.artifact!r} not found")
+            log.error("Skipping %s: artifact %r not found", manifest_path, manifest.artifact)
+            continue
+
+        try:
+            emulator = AutoEmulate.load_model(artifact)
+        except Exception as exc:  # noqa: BLE001
+            registry.errors.append(f"{artifact}: failed to deserialise ({exc})")
+            log.error("Skipping %s: failed to deserialise emulator: %s", artifact, exc)
+            continue
+
+        model = LoadedModel(manifest=manifest, emulator=emulator, path=version_dir)
+        if probe:
+            try:
+                _probe(model)
+            except Exception as exc:  # noqa: BLE001
+                registry.errors.append(f"{artifact}: probe prediction failed ({exc})")
+                log.error("Skipping %s: probe prediction failed: %s", artifact, exc)
                 continue
-            if (version_dir / MANIFEST_FILENAME).is_file():
-                found.append(version_dir)
-            else:
-                logger.warning("skipping %s: no %s", version_dir, MANIFEST_FILENAME)
-    return found
 
-
-def _probe(manifest: Manifest, emulator: object, version_dir: Path) -> torch.dtype:
-    """Run one midpoint prediction to prove the artifact matches its manifest.
-
-    Also settles the tensor dtype the emulator wants: AutoEmulate defaults to float64,
-    but a model whose weights are float32 raises rather than silently upcasting.
-    """
-    midpoint = [[p.midpoint for p in manifest.inputs]]
-    last_error: Exception | None = None
-    for dtype in (torch.float64, torch.float32):
-        try:
-            with torch.inference_mode():
-                mean, variance = emulator.predict_mean_and_variance(
-                    torch.tensor(midpoint, dtype=dtype)
-                )
-        except Exception as exc:
-            last_error = exc
-            continue
-
-        width = int(mean.reshape(1, -1).shape[1])
-        if width != 1:
-            raise RegistryError(
-                version_dir,
-                f"artifact predicts {width} outputs but manifest v1 describes a single "
-                f"output ({manifest.output.name!r})",
-            )
-        supports_uq = variance is not None
-        if supports_uq != manifest.artifact.supports_uq:
-            raise RegistryError(
-                version_dir,
-                f"artifact.supports_uq is {manifest.artifact.supports_uq} but the "
-                f"loaded {type(emulator).__name__} "
-                f"{'does' if supports_uq else 'does not'} return a variance",
-            )
-        return dtype
-
-    raise RegistryError(
-        version_dir,
-        f"probe prediction failed for a {len(manifest.inputs)}-feature input "
-        f"({manifest.input_names}) — the artifact does not match its manifest: "
-        f"{last_error}",
-    )
-
-
-def load_entry(version_dir: Path) -> LoadedModel:
-    """Load and fully validate a single `registry/<id>/<version>/` directory."""
-    version_dir = Path(version_dir)
-    manifest = load_manifest(version_dir / MANIFEST_FILENAME)
-
-    expected_id = version_dir.parent.name
-    expected_version = version_dir.name
-    if manifest.model_id != expected_id:
-        raise RegistryError(
-            version_dir / MANIFEST_FILENAME,
-            f"model_id {manifest.model_id!r} does not match its directory "
-            f"{expected_id!r}",
-        )
-    if manifest.version != expected_version:
-        raise RegistryError(
-            version_dir / MANIFEST_FILENAME,
-            f"version {manifest.version!r} does not match its directory "
-            f"{expected_version!r}",
+        registry.models.setdefault(manifest.model_id, {})[manifest.version] = model
+        log.info(
+            "Loaded %s v%s (%s, output=%s, R2=%.4f)",
+            manifest.model_id, manifest.version, manifest.emulator_model,
+            manifest.output.name, manifest.metrics.r2,
         )
 
-    artifact_path = version_dir / manifest.artifact.filename
-    if not artifact_path.is_file():
-        raise RegistryError(
-            version_dir,
-            f"artifact {manifest.artifact.filename!r} declared in the manifest is "
-            f"missing",
-        )
-    if manifest.artifact.sha256 is not None:
-        actual = sha256_file(artifact_path)
-        if actual != manifest.artifact.sha256:
-            raise RegistryError(
-                artifact_path,
-                f"checksum mismatch: manifest declares {manifest.artifact.sha256[:12]}… "
-                f"but the file hashes to {actual[:12]}…",
-            )
-
-    runtime_version = installed_autoemulate_version()
-    if manifest.autoemulate_version != runtime_version:
-        logger.warning(
-            "%s was serialized with autoemulate %s but this runtime has %s; "
-            "unpickling may fail or behave differently",
-            manifest.ref,
-            manifest.autoemulate_version,
-            runtime_version,
-        )
-
-    try:
-        emulator = AutoEmulate.load_model(artifact_path)
-    except Exception as exc:
-        raise RegistryError(
-            artifact_path,
-            f"failed to deserialize the emulator (serialized with autoemulate "
-            f"{manifest.autoemulate_version}, runtime has {runtime_version}): {exc}",
-        ) from exc
-
-    eval_fn = getattr(emulator, "eval", None)
-    if callable(eval_fn):
-        eval_fn()
-
-    actual_class = type(emulator).__name__
-    if actual_class != manifest.artifact.emulator_class:
-        logger.warning(
-            "%s: manifest declares emulator_class %r but the artifact is a %r",
-            manifest.ref,
-            manifest.artifact.emulator_class,
-            actual_class,
-        )
-
-    dtype = _probe(manifest, emulator, version_dir)
-    return LoadedModel(
-        manifest=manifest, emulator=emulator, directory=version_dir, dtype=dtype
-    )
-
-
-def load_registry(root: Path | str | None = None, strict: bool = True) -> ModelRegistry:
-    """Build the in-memory registry from disk.
-
-    Parameters
-    ----------
-    root
-        Registry directory. Defaults to ``$REGISTRY_PATH`` or ``./registry``.
-    strict
-        When True (the default) any invalid entry raises ``RegistryError`` and the
-        service refuses to start — a half-loaded registry must not be able to pass for
-        a healthy one. When False, failures are collected and reported on ``/health``.
-    """
-    root = Path(root) if root is not None else DEFAULT_REGISTRY_PATH
-    registry = ModelRegistry(root=root)
-
-    for version_dir in _discover_version_dirs(root):
-        try:
-            loaded = load_entry(version_dir)
-        except RegistryError as exc:
-            if strict:
-                raise
-            logger.error("registry entry failed to load: %s", exc)
-            registry.failures.append(
-                RegistryLoadFailure(path=str(version_dir), error=str(exc))
-            )
-            continue
-        if loaded.key in registry.models:
-            raise RegistryError(version_dir, f"duplicate model {loaded.manifest.ref}")
-        registry.models[loaded.key] = loaded
-        logger.info(
-            "loaded %s (%s, %d inputs, uq=%s)",
-            loaded.manifest.ref,
-            type(loaded.emulator).__name__,
-            len(loaded.manifest.inputs),
-            loaded.manifest.artifact.supports_uq,
-        )
-
+    log.info("Registry ready: %d model version(s), %d error(s)", registry.n_loaded,
+             len(registry.errors))
     return registry

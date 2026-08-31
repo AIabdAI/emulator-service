@@ -1,0 +1,2 @@
+id,model_name,x_transforms,y_transforms,params,r2_test,r2_test_std,rmse_test,rmse_test_std,r2_train,r2_train_std,rmse_train,rmse_train_std
+1,GaussianProcessMatern32,[StandardizeTransform()],[StandardizeTransform()],"{'epochs': 100, 'lr': 0.5, 'likelihood_cls': 'MultitaskGaussianLikelihood', 'scheduler_cls': None, 'scheduler_params': {}}",0.9998328685760498,3.547239975887351e-05,1.3119289875030518,0.13711588084697723,0.9999938011169434,4.354556324415171e-07,0.24881568551063538,0.0072487429715693

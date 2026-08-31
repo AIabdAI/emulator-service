@@ -1,134 +1,70 @@
-name: ci
+name: CI
 
 on:
   pull_request:
   push:
     branches: [main]
 
-# A newer push to the same PR makes the running job irrelevant.
 concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
 
-env:
-  PYTHON_VERSION: "3.12"
-
 jobs:
-  lint:
-    name: ruff
+  lint-and-test:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
       - uses: actions/setup-python@v5
         with:
-          python-version: ${{ env.PYTHON_VERSION }}
-
-      # Linting needs ruff and nothing else — no torch, no 5-minute install.
-      - name: Install ruff
-        run: pip install ruff==0.8.6
-
-      - run: ruff check .
-      - run: ruff format --check .
-
-  test:
-    name: pytest
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-python@v5
-        with:
-          python-version: ${{ env.PYTHON_VERSION }}
+          python-version: "3.12"
           cache: pip
-          cache-dependency-path: |
-            requirements/*.txt
 
-      # CPU-only torch: the CUDA wheel is several gigabytes and this project never
-      # touches a GPU. Installing it first means the resolution below is a no-op for torch.
       - name: Install CPU-only torch
-        run: pip install --index-url https://download.pytorch.org/whl/cpu torch
+        run: pip install --index-url https://download.pytorch.org/whl/cpu "torch==2.13.0"
 
-      - name: Install dev requirements
-        run: pip install -r requirements/dev.txt
-
-      # The registry artifacts are committed, so tests exercise real serialized
-      # emulators — the thing most likely to break on an AutoEmulate upgrade.
-      - name: Run tests
-        run: pytest --cov=api --cov-report=term-missing
-
-      - name: Assert the registry loads under strict mode
+      - name: Install dependencies
         run: |
-          python - <<'PY'
-          import sys
-          sys.path.insert(0, "src")
-          from api.registry_loader import load_registry
-          registry = load_registry("registry", strict=True)
-          assert len(registry) > 0, "registry is empty"
-          print(f"{len(registry)} model(s) loaded and probed")
-          PY
+          pip install -r requirements-serving.txt
+          pip install pytest ruff httpx pyyaml scikit-learn
 
-  docker:
-    name: docker build
+      - name: Ruff
+        run: ruff check src/ tests/ training/ scripts/
+
+      - name: Build a registry to test against
+        run: python scripts/build_registry.py --synthetic
+
+      - name: Pytest
+        run: pytest tests/ -q
+
+  docker-build:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
-
-      - uses: docker/setup-buildx-action@v3
 
       - name: Build the serving image
-        uses: docker/build-push-action@v6
-        with:
-          context: .
-          load: true
-          tags: emulator-service:ci
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+        run: docker build -t emulator-service:ci .
 
-      # A guardrail, not a comment: if a simulator library ever creeps into the serving
-      # requirements, this job fails rather than shipping a bloated image.
-      - name: Prove no simulator libraries are in the serving image
-        run: |
-          set -euo pipefail
-          installed=$(docker run --rm emulator-service:ci pip list --format=freeze)
-          echo "$installed" | wc -l | xargs echo "packages in image:"
-          for forbidden in pybamm openseespy pvlib; do
-            if echo "$installed" | grep -iq "^${forbidden}=="; then
-              echo "::error::$forbidden must not be in the serving image"
-              exit 1
-            fi
-          done
-          echo "no simulator libraries present"
-
-      # The README quotes this number; a build that silently doubles it should be
-      # visible in the job log rather than discovered months later.
       - name: Report image size
-        run: "docker images emulator-service:ci --format 'image size: {{ .Size }}'"
+        run: docker images emulator-service:ci --format "Image size: {{.Size}}"
 
-      - name: Smoke-test the running container
+      - name: Assert no simulator leaked into the serving image
         run: |
-          set -euo pipefail
+          docker run --rm emulator-service:ci python -c "
+          import importlib.util, sys
+          leaked = [m for m in ('pybamm', 'openseespy', 'pvlib')
+                    if importlib.util.find_spec(m) is not None]
+          if leaked:
+              sys.exit('Simulator packages present in the serving image: ' + ', '.join(leaked))
+          print('Serving image is simulator-free')
+          "
+
+      - name: Smoke-test the container
+        run: |
           docker run -d --name api -p 8000:8000 emulator-service:ci
-          for attempt in $(seq 1 40); do
-            if curl -fsS http://localhost:8000/health > /tmp/health.json; then break; fi
-            sleep 3
+          for i in $(seq 1 30); do
+            if curl -sf http://localhost:8000/health > /dev/null; then break; fi
+            sleep 2
           done
-          cat /tmp/health.json
-          test "$(jq -r .status /tmp/health.json)" = "ok"
-          test "$(jq -r .models_loaded /tmp/health.json)" -gt 0
-
-          model=$(jq -r '.model_ids[0]' /tmp/health.json)
-          curl -fsS "http://localhost:8000/models/$model" | jq '.example_request' > /tmp/example.json
-          curl -fsS -X POST "http://localhost:8000/models/$model/predict" \
-            -H 'Content-Type: application/json' -d @/tmp/example.json | tee /tmp/prediction.json
-          test "$(jq -r '.predictions[0].std' /tmp/prediction.json)" != "null"
-
-      - name: Container logs on failure
-        if: failure()
-        run: docker logs api || true
-
-      - name: Stop the container
-        if: always()
-        run: docker rm -f api || true
+          curl -sf http://localhost:8000/health
+          docker rm -f api

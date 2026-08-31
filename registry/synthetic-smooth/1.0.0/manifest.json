@@ -1,0 +1,41 @@
+{
+  "model_id": "synthetic-smooth",
+  "version": "1.0.0",
+  "project": "synthetic-standin",
+  "description": "STAND-IN model trained on synthetic data, not a physical emulator",
+  "autoemulate_version": "1.2.1",
+  "emulator_model": "GaussianProcessRBF",
+  "training_date": "2026-08-30",
+  "dataset_hash": "synthetic-ce5ccfe2572899fad33ecb4cb1e75350",
+  "n_train": 160,
+  "n_test": 40,
+  "inputs": [
+    {
+      "name": "x1",
+      "unit": "-",
+      "min": 0.0,
+      "max": 1.0
+    },
+    {
+      "name": "x2",
+      "unit": "-",
+      "min": 0.0,
+      "max": 1.0
+    },
+    {
+      "name": "x3",
+      "unit": "-",
+      "min": 0.0,
+      "max": 1.0
+    }
+  ],
+  "output": {
+    "name": "y_smooth",
+    "unit": "-"
+  },
+  "metrics": {
+    "r2": 1.0,
+    "rmse": 0.000512
+  },
+  "artifact": "emulator"
+}

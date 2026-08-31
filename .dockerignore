@@ -1,26 +1,14 @@
-# Keep the build context small and the serving image free of anything it must not have.
 .git/
 .github/
-.venv/
-venv/
-__pycache__/
-**/__pycache__/
-*.py[cod]
-.pytest_cache/
-.ruff_cache/
-.dvc/cache/
-.dvc/tmp/
-.dvc-storage/
-
-# The serving image never trains, never reads raw datasets, and never writes reports.
-training/
 tests/
+training/
 scripts/
 docs/
 mlruns/
 mlartifacts/
-reports/
-notebooks/
-
+data/
+**/__pycache__/
 *.md
-!README.md
+.venv/
+.pytest_cache/
+.ruff_cache/

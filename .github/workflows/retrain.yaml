@@ -1,157 +1,88 @@
-name: retrain
+name: Retrain
 
-# Fires when the data or the training recipe changes — the two things that can move a
-# model's behaviour without anyone touching the serving code.
+# Runs when a dataset or a training config changes. It never promotes a model on its
+# own: the job is a dry run that posts a CML report proposing promote or reject, and a
+# human decides by merging.
 on:
   pull_request:
     paths:
-      - "training/configs/**"
-      - "training/data/**"
-      - "training/retrain.py"
-      - "training/make_standin_datasets.py"
+      - "training/dataset_configs/**"
+      - "data/**.dvc"
+      - "dvc.lock"
   workflow_dispatch:
     inputs:
-      config:
+      dataset_config:
         description: Dataset config to retrain from
         required: true
-        default: training/configs/battery_capacity_fade.yaml
-
-concurrency:
-  group: retrain-${{ github.ref }}
-  cancel-in-progress: true
+        default: training/dataset_configs/synthetic_smooth.yaml
 
 permissions:
   contents: read
-  pull-requests: write # CML posts the report as a PR comment
+  pull-requests: write
 
 jobs:
   retrain:
-    name: retrain and report
     runs-on: ubuntu-latest
-    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
         with:
-          fetch-depth: 0 # CML wants the history to attach a comment to the right commit
+          fetch-depth: 0
 
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
           cache: pip
-          cache-dependency-path: requirements/*.txt
 
       - uses: iterative/setup-cml@v2
 
       - name: Install CPU-only torch
-        run: pip install --index-url https://download.pytorch.org/whl/cpu torch
+        run: pip install --index-url https://download.pytorch.org/whl/cpu "torch==2.13.0"
 
-      - name: Install training requirements
-        run: pip install -r requirements/training.txt
-
-      - name: Decide which configs to retrain
-        id: configs
-        env:
-          DISPATCH_CONFIG: ${{ github.event.inputs.config }}
+      - name: Install dependencies
         run: |
-          set -euo pipefail
-          if [ -n "${DISPATCH_CONFIG:-}" ]; then
-            echo "list=$DISPATCH_CONFIG" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-          # Retrain only what this PR actually touched. A change to retrain.py itself
-          # affects every model, so in that case retrain them all.
-          changed=$(git diff --name-only origin/${{ github.base_ref }}...HEAD)
-          if echo "$changed" | grep -qE '^training/(retrain|make_standin_datasets)\.py$'; then
-            list=$(ls training/configs/*.yaml | tr '\n' ' ')
+          pip install -r requirements-serving.txt
+          pip install mlflow scikit-learn pyyaml "dvc[all]"
+
+      # Datasets are DVC-tracked. Configure a remote via repository secrets; the
+      # fallback keeps the workflow demonstrable without one.
+      - name: Pull datasets (DVC)
+        continue-on-error: true
+        env:
+          DVC_REMOTE_URL: ${{ secrets.DVC_REMOTE_URL }}
+        run: |
+          if [ -n "$DVC_REMOTE_URL" ]; then
+            dvc remote modify --local storage url "$DVC_REMOTE_URL"
+            dvc pull -v
           else
-            list=$(echo "$changed" | grep -E '^training/configs/.*\.yaml$' || true)
-            for data in $(echo "$changed" | grep -E '^training/data/' || true); do
-              stem=$(basename "$data" | sed -E 's/\.(csv|parquet)(\.dvc)?$//')
-              [ -f "training/configs/$stem.yaml" ] && list="$list training/configs/$stem.yaml"
-            done
-            list=$(echo "$list" | tr ' ' '\n' | sort -u | tr '\n' ' ')
+            echo "No DVC remote configured; regenerating the synthetic dataset instead."
+            python - <<'PY'
+          import numpy as np, pandas as pd, pathlib
+          pathlib.Path("data").mkdir(exist_ok=True)
+          rng = np.random.default_rng(0); x = rng.uniform(0, 1, (200, 3))
+          y = np.sin(2*x[:,0]) + 0.5*x[:,1]**2 + 0.2*x[:,2]
+          pd.DataFrame({"x1":x[:,0],"x2":x[:,1],"x3":x[:,2],"y_smooth":y}).to_parquet(
+              "data/synthetic_smooth.parquet", index=False)
+          PY
           fi
-          echo "list=$list" >> "$GITHUB_OUTPUT"
-          echo "will retrain: $list"
 
-      # Datasets are DVC-tracked. `dvc pull` needs a remote this workflow has no
-      # credentials for, so fall back to the seeded generator: the stand-in datasets are
-      # byte-reproducible, which is exactly why the manifest's dataset hash still means
-      # something here. For real simulator data, configure a remote and drop the fallback.
-      - name: Fetch datasets
-        env:
-          DVC_REMOTE_CONFIGURED: ${{ secrets.DVC_REMOTE_URL != '' }}
+      - name: Retrain (dry run -- never promotes in CI)
         run: |
-          set -euo pipefail
-          if [ "$DVC_REMOTE_CONFIGURED" = "true" ]; then
-            dvc remote modify --local local-storage url "${{ secrets.DVC_REMOTE_URL }}"
-            dvc pull
-          else
-            echo "::notice::No DVC remote configured; regenerating the seeded stand-in datasets."
-            python training/make_standin_datasets.py
-          fi
-          ls -la training/data/
+          CONFIG="${{ github.event.inputs.dataset_config }}"
+          CONFIG="${CONFIG:-training/dataset_configs/synthetic_smooth.yaml}"
+          python training/retrain.py --dataset-config "$CONFIG" --report report.md
 
-      # --registry writes to a scratch directory outside the repo. Nothing lands in
-      # registry/ from CI: the workflow's job is to produce evidence, not to deploy.
-      - name: Retrain and evaluate
-        run: |
-          set -euo pipefail
-          mkdir -p reports "$RUNNER_TEMP/candidate-registry"
-          cp -r registry/. "$RUNNER_TEMP/candidate-registry/"
-          : > reports/report.md
-          for config in ${{ steps.configs.outputs.list }}; do
-            stem=$(basename "$config" .yaml)
-            echo "::group::retraining $stem"
-            python training/retrain.py \
-              --config "$config" \
-              --registry "$RUNNER_TEMP/candidate-registry" \
-              --report "reports/$stem.md" \
-              --json "reports/$stem.json"
-            cat "reports/$stem.md" >> reports/report.md
-            echo "" >> reports/report.md
-            echo "::endgroup::"
-          done
-        env:
-          MLFLOW_TRACKING_URI: ${{ secrets.MLFLOW_TRACKING_URI }}
-          LOG_LEVEL: INFO
-
-      - name: Explain what a human still has to do
-        run: |
-          # Indented to stay inside the YAML block scalar; the block indent is stripped
-          # before the shell sees it, so EOF still lands in column 1.
-          cat >> reports/report.md <<'EOF'
-          ---
-
-          ### How to act on this
-
-          This workflow **does not promote anything**. It trained a candidate against a
-          scratch registry and measured it; the registry on `main` is untouched.
-
-          To promote a candidate that this report recommends:
-
-          ```bash
-          dvc pull                    # or: python training/make_standin_datasets.py
-          python training/retrain.py --config <the config above>
-          git add registry/ && git commit -m "Promote <model-id> <version>"
-          ```
-
-          Then open a PR. A reviewer reads the metrics, the manifest diff and the
-          dataset hash, and merges. Deployment is a merge, so a rollback is a revert.
-          EOF
-
-      - name: Post the report as a PR comment
+      - name: Post the CML report as a PR comment
         if: github.event_name == 'pull_request'
         env:
           REPO_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: cml comment update --target=pr reports/report.md
-
-      - name: Upload the candidate artifacts
-        uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: retrain-candidates
-          path: |
-            reports/
-            ${{ runner.temp }}/candidate-registry/
-          retention-days: 14
+        run: |
+          {
+            echo "# Retraining report"
+            echo
+            cat report.md
+            echo
+            echo "> Generated by \`.github/workflows/retrain.yaml\`."
+            echo "> Automation proposes; promotion happens when a human merges a PR that"
+            echo "> adds the new version directory."
+          } > comment.md
+          cml comment create comment.md

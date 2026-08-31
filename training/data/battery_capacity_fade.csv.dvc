@@ -1,5 +1,0 @@
-outs:
-- md5: 0973fd6bc8df9beef38895a6ae6093b6
-  size: 16777
-  hash: md5
-  path: battery_capacity_fade.csv

@@ -1,4 +1,0 @@
-[core]
-    remote = local-storage
-['remote "local-storage"']
-    url = ../.dvc-storage

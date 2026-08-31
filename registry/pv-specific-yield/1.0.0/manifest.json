@@ -1,0 +1,59 @@
+{
+  "model_id": "pv-specific-yield",
+  "version": "1.0.0",
+  "project": "pv-emulator",
+  "description": "Specific annual yield emulated from 5 design parameters",
+  "autoemulate_version": "1.2.1",
+  "emulator_model": "GaussianProcessMatern32",
+  "training_date": "2026-08-31",
+  "dataset_hash": "bd241addababde4a6f8bfde24f5b58ea3d5f75930a5fd3186e09a8f4911c08c7",
+  "n_train": 640,
+  "n_test": 160,
+  "inputs": [
+    {
+      "name": "surface_tilt",
+      "unit": "deg",
+      "min": 0.01740110213783511,
+      "max": 44.97708586568271,
+      "description": "training-domain bounds taken from the sampled dataset"
+    },
+    {
+      "name": "surface_azimuth",
+      "unit": "deg",
+      "min": 90.1190033536178,
+      "max": 269.87325384561797,
+      "description": "training-domain bounds taken from the sampled dataset"
+    },
+    {
+      "name": "soiling_loss",
+      "unit": "fraction",
+      "min": 5.376408819155659e-05,
+      "max": 0.1498939751406982,
+      "description": "training-domain bounds taken from the sampled dataset"
+    },
+    {
+      "name": "dc_ac_ratio",
+      "unit": "-",
+      "min": 1.000106780943534,
+      "max": 1.499893505306776,
+      "description": "training-domain bounds taken from the sampled dataset"
+    },
+    {
+      "name": "albedo",
+      "unit": "-",
+      "min": 0.10027378774601638,
+      "max": 0.39979856025687743,
+      "description": "training-domain bounds taken from the sampled dataset"
+    }
+  ],
+  "output": {
+    "name": "specific_yield_kWh_per_kWp",
+    "unit": "kWh/kWp/yr",
+    "description": "Specific annual yield"
+  },
+  "metrics": {
+    "r2": 0.999833,
+    "rmse": 1.311929
+  },
+  "artifact": "emulator"
+}

@@ -1,15 +1,6 @@
-# Local production-shaped stack: the serving API plus an MLflow tracking server.
-#
-#   docker compose up --build
-#
-#   API   → http://localhost:8000/docs
-#   MLflow→ http://localhost:5000
-#
-# Everything here is CPU-only and needs no cloud account. Moving to a managed
-# deployment is a config change, not a rewrite: point REGISTRY_PATH at a mounted
-# volume or object-store sync, and MLFLOW_TRACKING_URI at a hosted tracking server.
-
-name: emulator-service
+# Local stack: the emulator API plus an MLflow tracking server with volume-backed
+# storage. No cloud account is assumed; moving to a managed backend is a change to
+# MLFLOW_BACKEND_STORE_URI, not a rewrite.
 
 services:
   api:
@@ -21,26 +12,12 @@ services:
     ports:
       - "8000:8000"
     environment:
-      REGISTRY_PATH: /app/registry
-      # Refuse to start on a malformed registry rather than serve a partial one.
-      REGISTRY_STRICT: "true"
       LOG_LEVEL: INFO
-      # Deterministic per-request latency matters more than per-request throughput
-      # when the server is already handling requests concurrently.
-      OMP_NUM_THREADS: "1"
+      REGISTRY_PATH: /app/registry
     volumes:
-      # Read-only: the serving process must never mutate the registry it serves.
+      # Mount the registry read-only so a new model version can be published without
+      # rebuilding the image, and the container can never mutate it.
       - ./registry:/app/registry:ro
-    healthcheck:
-      test:
-        - CMD
-        - python
-        - -c
-        - "import urllib.request as u, sys; sys.exit(0 if u.urlopen('http://127.0.0.1:8000/health', timeout=4).status == 200 else 1)"
-      interval: 30s
-      timeout: 5s
-      start_period: 40s
-      retries: 3
     restart: unless-stopped
 
   mlflow:
@@ -48,27 +25,19 @@ services:
     container_name: emulator-mlflow
     ports:
       - "5000:5000"
-    # SQLite backend + local artifact volume: a real registry-backed tracking server,
-    # with no cloud dependency. Swap --backend-store-uri for Postgres in production.
+    environment:
+      MLFLOW_BACKEND_STORE_URI: sqlite:////mlflow/store/mlflow.db
+      MLFLOW_DEFAULT_ARTIFACT_ROOT: /mlflow/artifacts
+    volumes:
+      - mlflow-store:/mlflow/store
+      - mlflow-artifacts:/mlflow/artifacts
     command: >
       mlflow server
-      --host 0.0.0.0
-      --port 5000
-      --backend-store-uri sqlite:////mlflow/mlflow.db
+      --backend-store-uri sqlite:////mlflow/store/mlflow.db
       --default-artifact-root /mlflow/artifacts
-    volumes:
-      - mlflow-data:/mlflow
-    healthcheck:
-      test:
-        - CMD
-        - python
-        - -c
-        - "import urllib.request as u, sys; sys.exit(0 if u.urlopen('http://127.0.0.1:5000/health', timeout=4).status == 200 else 1)"
-      interval: 30s
-      timeout: 5s
-      start_period: 30s
-      retries: 3
+      --host 0.0.0.0 --port 5000
     restart: unless-stopped
 
 volumes:
-  mlflow-data:
+  mlflow-store:
+  mlflow-artifacts:

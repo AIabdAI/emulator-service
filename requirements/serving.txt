@@ -1,6 +1,0 @@
-# Serving runtime — deliberately contains NO simulator libraries.
-# (no pybamm, no openseespy, no pvlib). See README "design decisions".
-autoemulate==1.2.1
-fastapi==0.115.6
-uvicorn[standard]==0.34.0
-pydantic==2.10.4
