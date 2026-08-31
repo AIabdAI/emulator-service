@@ -98,16 +98,22 @@ class LoadedModel:
     def predict(self, matrix: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
         """Return per-row (mean, std).
 
-        AutoEmulate emulators return a torch Distribution with ``.mean`` / ``.variance``
-        when probabilistic, and a plain tensor otherwise. A deterministic emulator
-        reports zero uncertainty rather than a fabricated one.
+        AutoEmulate emulators return a ``torch.distributions.Distribution`` with
+        ``.mean`` / ``.variance`` when probabilistic, and a plain tensor otherwise.
+        A deterministic emulator reports zero uncertainty rather than a fabricated one.
+
+        The type check must be ``isinstance(out, Distribution)``, **not**
+        ``hasattr(out, "mean")``: ``torch.Tensor`` also has a ``.mean`` attribute -- it
+        is a bound method -- so the duck-typed check silently misclassifies every
+        deterministic emulator and then fails converting a method to a float.
         """
         import torch
+        from torch.distributions import Distribution
 
         tensor = torch.tensor(matrix, dtype=torch.float32)
         with torch.no_grad():
             out = self.emulator.predict(tensor)
-        if hasattr(out, "mean"):
+        if isinstance(out, Distribution):
             mean = np.asarray(out.mean, dtype=float).reshape(len(matrix), -1)[:, 0]
             std = np.sqrt(
                 np.clip(np.asarray(out.variance, dtype=float), 0.0, None)

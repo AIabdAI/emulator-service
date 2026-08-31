@@ -1,0 +1,59 @@
+{
+  "model_id": "frame-drift-at-peak",
+  "version": "1.0.0",
+  "project": "frame-emulator",
+  "description": "Roof drift ratio at peak base shear emulated from 5 design parameters",
+  "autoemulate_version": "1.2.1",
+  "emulator_model": "MLP",
+  "training_date": "2026-08-31",
+  "dataset_hash": "b7da8c8b0e9c689cb58b247d37ff8d40ac2f0c48e58ee82173807cef399b918a",
+  "n_train": 400,
+  "n_test": 100,
+  "inputs": [
+    {
+      "name": "fc_MPa",
+      "unit": "MPa",
+      "min": 15.025300459037775,
+      "max": 39.98035363042149,
+      "description": "training-domain bounds taken from the sampled dataset"
+    },
+    {
+      "name": "fy_MPa",
+      "unit": "MPa",
+      "min": 300.06220845068515,
+      "max": 499.8482143681092,
+      "description": "training-domain bounds taken from the sampled dataset"
+    },
+    {
+      "name": "column_scale",
+      "unit": "-",
+      "min": 0.8001955683660213,
+      "max": 1.1995479376714955,
+      "description": "training-domain bounds taken from the sampled dataset"
+    },
+    {
+      "name": "beam_scale",
+      "unit": "-",
+      "min": 0.8000823732808827,
+      "max": 1.1999830751908613,
+      "description": "training-domain bounds taken from the sampled dataset"
+    },
+    {
+      "name": "gravity_factor",
+      "unit": "-",
+      "min": 0.800707941455702,
+      "max": 1.3999943103285057,
+      "description": "training-domain bounds taken from the sampled dataset"
+    }
+  ],
+  "output": {
+    "name": "drift_at_peak_pct",
+    "unit": "%",
+    "description": "Roof drift ratio at peak base shear"
+  },
+  "metrics": {
+    "r2": 0.973423,
+    "rmse": 0.050872
+  },
+  "artifact": "emulator"
+}

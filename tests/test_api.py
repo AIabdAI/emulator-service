@@ -349,6 +349,44 @@ def test_highest_version_is_served_by_default(tmp_path, registry_root):
     assert reg.get(model_id, "1.0.0").manifest.version == "1.0.0"
 
 
+def test_deterministic_emulator_reports_zero_uncertainty_not_a_crash(registry_root):
+    """Regression: a deterministic emulator must not be mistaken for a Distribution.
+
+    ``torch.Tensor`` has a ``.mean`` attribute (a bound method), so a duck-typed
+    ``hasattr(out, "mean")`` check silently misclassifies every deterministic emulator
+    and then fails converting a method to a float. This caught a real bug: an MLP-backed
+    model was rejected at startup by the probe with
+    "float() argument must be ... not 'builtin_function_or_method'".
+    """
+    import numpy as np
+
+    reg = load_registry(registry_root)
+    deterministic = [
+        m
+        for by_version in reg.models.values()
+        for m in by_version.values()
+        if m.manifest.emulator_model in {"MLP", "RadialBasisFunctions", "PolynomialRegression"}
+    ]
+    if not deterministic:
+        pytest.skip("no deterministic emulator in the registry to exercise this path")
+
+    for model in deterministic:
+        midpoint = np.array([[s.midpoint for s in model.manifest.inputs]])
+        mean, std = model.predict(midpoint)
+        assert np.isfinite(mean).all(), f"{model.manifest.model_id} returned a non-finite mean"
+        assert (std == 0.0).all(), (
+            f"{model.manifest.model_id} is deterministic and must report zero uncertainty, "
+            "not a fabricated interval"
+        )
+
+
+def test_every_registry_model_loads_without_error(registry_root):
+    """The whole registry must load cleanly -- a rejected model is a bug, not a warning."""
+    reg = load_registry(registry_root)
+    assert not reg.errors, f"registry rejected {len(reg.errors)} model(s): {reg.errors}"
+    assert reg.n_loaded >= 1
+
+
 def test_service_never_imports_a_simulator():
     """The serving path must not drag pybamm/openseespy/pvlib into the process."""
     import subprocess

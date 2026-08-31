@@ -66,7 +66,7 @@ docker compose up --build
 ```bash
 # Liveness and how many model versions loaded
 curl -s http://localhost:8000/health
-# {"status":"ok","n_models_loaded":2,"registry_path":"/app/registry","autoemulate_version":"1.2.1"}
+# {"status":"ok","n_models_loaded":11,"registry_path":"/app/registry","autoemulate_version":"1.2.1"}
 
 # List models with their held-out metrics
 curl -s http://localhost:8000/models
@@ -120,26 +120,46 @@ curl -s -X POST http://localhost:8000/models/synthetic-smooth/predict \
 A specific version can be addressed with `?version=1.0.0`; without it the highest
 semantic version is served.
 
-### Serving a real emulator end-to-end
+### Serving real emulators end-to-end
 
-With the sibling `battery-emulator` project built into the registry:
+All three sibling projects registered — 11 model versions from three different
+simulators, served behind one contract:
 
 ```
-model_id                    version  output            R²        project
-battery-capacity            1.0.0    capacity_Ah       0.9749    battery-emulator
-battery-energy              1.0.0    energy_Wh         0.9771    battery-emulator
-battery-temperature-rise    1.0.0    max_temp_rise_K   0.7634    battery-emulator
+model_id                   output                       R²        project
+battery-capacity           capacity_Ah                  0.9749    battery-emulator
+battery-energy             energy_Wh                    0.9771    battery-emulator
+battery-temperature-rise   max_temp_rise_K              0.7634    battery-emulator
+frame-base-shear           peak_base_shear_kN           0.9999    frame-emulator
+frame-drift-at-peak        drift_at_peak_pct            0.9734    frame-emulator
+frame-initial-stiffness    initial_stiffness_kN_per_m   1.0000    frame-emulator
+pv-specific-yield          specific_yield_kWh_per_kWp   0.9998    pv-emulator
+pv-capacity-factor         capacity_factor_pct          0.9998    pv-emulator
+pv-clipping-loss           clipping_loss_pct            0.9993    pv-emulator
+synthetic-linear           y_linear                     1.0000    synthetic-standin
+synthetic-smooth           y_smooth                     1.0000    synthetic-standin
 ```
+
+`frame-drift-at-peak` is an **MLP** — a deterministic emulator — and correctly reports
+`std = 0.0` rather than inventing an interval. Getting that right required a real fix:
+`torch.Tensor` has a `.mean` attribute (a bound method), so the duck-typed
+`hasattr(out, "mean")` check misclassified it as a distribution and the startup probe
+rejected the model. The check is now `isinstance(out, Distribution)`, and two tests
+cover it.
+
+Two cross-checks against the true simulators, both passing:
+
+| Model | Service prediction | True simulator | Error |
+|---|---|---|---|
+| `battery-capacity` at Chen2020 baseline (1 C, 25 °C) | 5.0101 ± 0.1987 A·h | 4.9478 A·h | **1.3 %** |
+| `frame-initial-stiffness` at f'c = 18 MPa, midpoint geometry | 4238.0 ± 9.2 kN/m | 4218.9 kN/m | **0.45 %** |
 
 Note that the manifest bounds are the **actual sampled training domain**, not the
 nominal config ranges — e.g. `c_rate` is `[0.5034, 2.9999]` rather than `[0.5, 3.0]`,
 because that is where the Latin Hypercube design really put samples.
 
-Querying `battery-capacity` at the Chen2020 baseline (1 C, 25 °C, default geometry)
-returns **5.0101 ± 0.1987 A·h**. The true PyBaMM solve at exactly those conditions gives
-**4.9478 A·h** — a 1.3 % error, comfortably inside the uncertainty the service reported.
 That is the whole contract working: a millisecond answer, an honest error bar, and the
-error bar is right.
+error bar is the right size.
 
 Pushing `c_rate` to 9.0 — outside the training domain — returns `422 input_out_of_bounds`
 with `valid_range: [0.5034, 2.9999]`, and the emulator is never called.
@@ -162,20 +182,26 @@ structured JSON log line with model id, batch size, latency and status.
 
 ## Measured performance
 
-Batch of 100 rows against the `synthetic-linear` GP emulator, in-process (excludes
-network and container overhead), 100 timed requests after 10 warm-up requests, on a
-CPU-only Windows laptop:
+Batch of 100 rows, in-process (excludes network and container overhead), 100 timed
+requests after 10 warm-up requests, on a CPU-only Windows laptop:
 
-| | |
-|---|---|
-| p50 | **11.85 ms** |
-| p95 | **13.66 ms** |
-| p99 | 14.38 ms |
-| throughput | ~8,370 rows/s |
+| | `battery-capacity` (real, 480 training points) | `synthetic-linear` (160 training points) |
+|---|---|---|
+| p50 | **27.60 ms** | 11.85 ms |
+| p95 | **37.93 ms** | 13.66 ms |
+| p99 | 48.44 ms | 14.38 ms |
+| throughput | ~3,530 rows/s | ~8,370 rows/s |
 
-Reproduce with `python scripts/loadtest.py --batch 100 --requests 100`, or against a
-running container with `--url http://localhost:8000`. These are honest single-process
-numbers on modest hardware; they are not a claim about a tuned production deployment.
+**Read the left column.** The real emulator is ~2.3× slower than the synthetic stand-in
+for the obvious reason: a Gaussian Process prediction costs O(n) per row against its
+training set, and the real model has three times the training data. Quoting only the
+stand-in's number would have flattered the service by a factor of two.
+
+Reproduce with
+`python scripts/loadtest.py --model battery-capacity --batch 100 --requests 100`, or
+against a running container with `--url http://localhost:8000`. These are honest
+single-process numbers on modest hardware; they are not a claim about a tuned production
+deployment.
 
 **Serving image size:** reported by CI on every build
 (`docker images emulator-service:ci --format "{{.Size}}"`). The image installs
