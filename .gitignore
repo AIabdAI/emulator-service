@@ -17,11 +17,9 @@ data/*
 
 # Registry artifacts ARE committed, deliberately: a clean clone must be able to run
 # `docker compose up` and answer the README's curl examples without first rebuilding
-# the registry from the sibling projects. The serialised GP emulators total ~9 MB,
+# the registry from the sibling projects. The serialised GP emulators total ~36 MB,
 # which is an acceptable price for a working quickstart. If the registry ever grows
 # past that, move the binaries to DVC and keep the manifests in git.
-#
-# UPDATE: with all three sibling projects registered the store is ~36 MB across 11
-# emulators (largest single file 7 MB). Still well inside GitHub's limits and still
-# worth it for a quickstart that works against real models, but this is the point at
-# which DVC becomes the better answer if a fourth project is added.
+# (11 emulators, largest single file 7 MB) -- well inside GitHub's limits, and worth it
+# for a quickstart that works against real models. This is roughly the point at which
+# DVC becomes the better answer if more projects are added.
