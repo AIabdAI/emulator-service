@@ -120,6 +120,30 @@ curl -s -X POST http://localhost:8000/models/synthetic-smooth/predict \
 A specific version can be addressed with `?version=1.0.0`; without it the highest
 semantic version is served.
 
+### Serving a real emulator end-to-end
+
+With the sibling `battery-emulator` project built into the registry:
+
+```
+model_id                    version  output            R²        project
+battery-capacity            1.0.0    capacity_Ah       0.9749    battery-emulator
+battery-energy              1.0.0    energy_Wh         0.9771    battery-emulator
+battery-temperature-rise    1.0.0    max_temp_rise_K   0.7634    battery-emulator
+```
+
+Note that the manifest bounds are the **actual sampled training domain**, not the
+nominal config ranges — e.g. `c_rate` is `[0.5034, 2.9999]` rather than `[0.5, 3.0]`,
+because that is where the Latin Hypercube design really put samples.
+
+Querying `battery-capacity` at the Chen2020 baseline (1 C, 25 °C, default geometry)
+returns **5.0101 ± 0.1987 A·h**. The true PyBaMM solve at exactly those conditions gives
+**4.9478 A·h** — a 1.3 % error, comfortably inside the uncertainty the service reported.
+That is the whole contract working: a millisecond answer, an honest error bar, and the
+error bar is right.
+
+Pushing `c_rate` to 9.0 — outside the training domain — returns `422 input_out_of_bounds`
+with `valid_range: [0.5034, 2.9999]`, and the emulator is never called.
+
 ---
 
 ## Endpoints
