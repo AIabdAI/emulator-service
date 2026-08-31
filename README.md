@@ -203,6 +203,11 @@ against a running container with `--url http://localhost:8000`. These are honest
 single-process numbers on modest hardware; they are not a claim about a tuned production
 deployment.
 
+**Registry size:** 11 serialised emulators total ~36 MB (largest single file 7 MB),
+committed so the quickstart works on a clean clone. That is comfortably inside GitHub's
+limits, but it is also the point at which moving the binaries to DVC — keeping only the
+manifests in git — becomes the better answer if more projects are added.
+
 **Serving image size:** reported by CI on every build
 (`docker images emulator-service:ci --format "{{.Size}}"`). The image installs
 CPU-only torch from PyTorch's CPU index rather than the default wheel, which alone

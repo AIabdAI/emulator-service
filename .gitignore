@@ -20,3 +20,8 @@ data/*
 # the registry from the sibling projects. The serialised GP emulators total ~9 MB,
 # which is an acceptable price for a working quickstart. If the registry ever grows
 # past that, move the binaries to DVC and keep the manifests in git.
+#
+# UPDATE: with all three sibling projects registered the store is ~36 MB across 11
+# emulators (largest single file 7 MB). Still well inside GitHub's limits and still
+# worth it for a quickstart that works against real models, but this is the point at
+# which DVC becomes the better answer if a fourth project is added.
